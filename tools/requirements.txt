@@ -1,0 +1,7 @@
+ai-edge-torch
+onnx
+onnx-tf
+tensorflow
+torch
+torchvision
+ultralytics
