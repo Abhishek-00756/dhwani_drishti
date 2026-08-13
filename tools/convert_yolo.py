@@ -18,7 +18,6 @@ ObjectDetector.kt also accepts the [1, maxDet, 6] layout produced by some
 ultralytics versions. Keep the default COCO 80 class order; ObjectDetector
 maps class ids against the same list.
 
-Start with fp16 (half=True): GPU-delegate friendly and ~2x smaller than fp32.
 imgsz=320 keeps detection cheap alongside MiDaS; 640 is more accurate but
 heavier. int8 needs a representative calibration dataset and is not needed
 for the MVP.
