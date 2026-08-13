@@ -22,6 +22,7 @@ class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite"
 
         // Standard COCO 80-class order (index 0 = person)
         val COCO_LABELS = listOf(
+//            "person" , "laptop", "mouse"
             "person","bicycle","car","motorcycle","airplane","bus","train","truck","boat",
             "traffic light","fire hydrant","stop sign","parking meter","bench","bird","cat",
             "dog","horse","sheep","cow","elephant","bear","zebra","giraffe","backpack",

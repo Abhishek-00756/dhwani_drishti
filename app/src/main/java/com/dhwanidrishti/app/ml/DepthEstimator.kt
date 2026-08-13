@@ -107,7 +107,7 @@ class DepthEstimator(context: Context) {
 
         reusableInputBuffer.rewind()
     }
-
+    // private fun buildGpuDelegate(): Delegate? = null // force CPU, test crash goes away//
     private fun buildGpuDelegate(): Delegate? {
         return try {
             val compatList = CompatibilityList()
