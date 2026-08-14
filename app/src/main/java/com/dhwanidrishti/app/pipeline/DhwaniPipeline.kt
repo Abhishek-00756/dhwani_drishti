@@ -113,7 +113,7 @@ class DhwaniPipeline(
                 sonification.updateFromZones(smoothed)
             }
 
-            if (mode == AppMode.SOUNDSCAPE) {
+            if (mode == AppMode.NARRATED || mode == AppMode.HYBRID) {
                 modeBEngine().process(closeness, frame)
             }
 
