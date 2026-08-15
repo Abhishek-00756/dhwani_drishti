@@ -1,5 +1,5 @@
 package com.dhwanidrishti.app.pipeline
-
+import android.util.Log
 import android.content.Context
 import android.graphics.Bitmap
 import com.dhwanidrishti.app.audio.AnnouncementManager
@@ -353,7 +353,17 @@ class ModeBEngine(
             scene
         )
     }
+    fun speak(
+        text: String
+    ) {
 
+        Log.d(
+            "DHWANI_OCR",
+            "TTS -> [$text]"
+        )
+
+        announcements.speak(text)
+    }
     // =========================================================
     // OPTIONAL PUBLIC SCENE ACCESS
     // =========================================================

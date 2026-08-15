@@ -2,8 +2,11 @@ package com.dhwanidrishti.app.audio
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.util.Log
 import com.dhwanidrishti.app.processing.ObjectTracker
 import com.dhwanidrishti.app.processing.Zone
 import java.util.Locale
@@ -11,23 +14,61 @@ import java.util.Locale
 /**
  * Handles all spoken output for Dhwani Drishti.
  *
- * Features:
+ * Responsibilities:
  *
  * 1. Automatic obstacle warnings
  * 2. "What's in front of me?"
- * 3. "Read" command
+ * 3. OCR text output
+ * 4. Reliable TTS state management
  *
- * "Read" currently means:
- * - Describe the visible detected objects.
- * - If nothing is detected, say:
- *   "There is nothing to read."
+ * IMPORTANT:
  *
- * OCR can be connected later so "read" can actually read
- * text/signboards/documents from the camera.
+ * Voice-command speech has higher priority than automatic
+ * obstacle announcements.
  */
 class AnnouncementManager(
     context: Context
 ) {
+
+    companion object {
+
+        private const val TAG = "DHWANI_TTS"
+
+        /**
+         * Extremely close.
+         *
+         * 0.0 = nearest
+         * 1.0 = farthest
+         */
+        const val VERY_CLOSE_THRESHOLD = 0.20f
+
+        /**
+         * Close obstacle.
+         */
+        const val CLOSE_THRESHOLD = 0.35f
+
+        /**
+         * Nearby obstacle.
+         */
+        const val NEARBY_THRESHOLD = 0.55f
+
+        /**
+         * Same tracked object should not be announced
+         * repeatedly.
+         */
+        const val COOLDOWN_MS = 6000L
+
+        /**
+         * Maximum number of tracker IDs kept in cooldown map.
+         */
+        const val MAX_COOLDOWN_ENTRIES = 200
+
+        /**
+         * Prevents two voice commands from firing immediately
+         * one after another.
+         */
+        const val COMMAND_SPEECH_COOLDOWN_MS = 700L
+    }
 
     // =========================================================
     // TTS
@@ -35,9 +76,43 @@ class AnnouncementManager(
 
     private val tts: TextToSpeech
 
+    private val mainHandler =
+        Handler(Looper.getMainLooper())
+
+    /**
+     * True while Dhwani is currently speaking.
+     */
     @Volatile
     var isSpeaking: Boolean = false
         private set
+
+    /**
+     * True when the current speech was requested directly
+     * by the user.
+     *
+     * Example:
+     *
+     * "Hey Dhwani, what's in front of me?"
+     *
+     * or
+     *
+     * "Hey Dhwani, read"
+     */
+    @Volatile
+    private var commandSpeechActive: Boolean = false
+
+    /**
+     * Last time an explicit command response was spoken.
+     */
+    @Volatile
+    private var lastCommandSpeechTime: Long = 0L
+
+    /**
+     * Used to prevent old TTS callbacks from incorrectly
+     * changing isSpeaking for a newer utterance.
+     */
+    @Volatile
+    private var currentUtteranceId: String? = null
 
     // =========================================================
     // AUTOMATIC ANNOUNCEMENT COOLDOWN
@@ -52,11 +127,26 @@ class AnnouncementManager(
 
     init {
 
-        tts = TextToSpeech(context) { status ->
+        tts = TextToSpeech(context.applicationContext) { status ->
 
             if (status != TextToSpeech.SUCCESS) {
+
+                Log.e(
+                    TAG,
+                    "TTS initialization failed. status=$status"
+                )
+
                 return@TextToSpeech
             }
+
+            Log.d(
+                TAG,
+                "TTS initialized successfully"
+            )
+
+            // -------------------------------------------------
+            // Accessibility audio
+            // -------------------------------------------------
 
             tts.setAudioAttributes(
                 AudioAttributes.Builder()
@@ -69,11 +159,30 @@ class AnnouncementManager(
                     .build()
             )
 
+            // -------------------------------------------------
+            // Language
+            // -------------------------------------------------
+
+            val defaultLocale =
+                Locale.getDefault()
+
+            val languageResult =
+                tts.setLanguage(defaultLocale)
+
+            Log.d(
+                TAG,
+                "TTS language=$defaultLocale result=$languageResult"
+            )
+
+            // -------------------------------------------------
+            // Prefer offline voice
+            // -------------------------------------------------
+
             val offlineVoice =
                 tts.voices
                     ?.filter {
                         it.locale.language ==
-                                Locale.getDefault().language &&
+                                defaultLocale.language &&
                                 !it.isNetworkConnectionRequired
                     }
                     ?.maxByOrNull {
@@ -81,11 +190,25 @@ class AnnouncementManager(
                     }
 
             if (offlineVoice != null) {
+
                 tts.voice = offlineVoice
+
+                Log.d(
+                    TAG,
+                    "Using offline TTS voice=${offlineVoice.name}"
+                )
             }
+
+            // -------------------------------------------------
+            // Navigation-friendly speech
+            // -------------------------------------------------
 
             tts.setSpeechRate(1.05f)
             tts.setPitch(1.0f)
+
+            // -------------------------------------------------
+            // TTS callbacks
+            // -------------------------------------------------
 
             tts.setOnUtteranceProgressListener(
                 object : UtteranceProgressListener() {
@@ -93,19 +216,57 @@ class AnnouncementManager(
                     override fun onStart(
                         utteranceId: String?
                     ) {
-                        isSpeaking = true
+
+                        if (
+                            utteranceId ==
+                            currentUtteranceId
+                        ) {
+
+                            isSpeaking = true
+
+                            Log.d(
+                                TAG,
+                                "TTS START: $utteranceId"
+                            )
+                        }
                     }
 
                     override fun onDone(
                         utteranceId: String?
                     ) {
-                        isSpeaking = false
+
+                        if (
+                            utteranceId ==
+                            currentUtteranceId
+                        ) {
+
+                            isSpeaking = false
+                            commandSpeechActive = false
+
+                            Log.d(
+                                TAG,
+                                "TTS DONE: $utteranceId"
+                            )
+                        }
                     }
 
                     override fun onError(
                         utteranceId: String?
                     ) {
-                        isSpeaking = false
+
+                        if (
+                            utteranceId ==
+                            currentUtteranceId
+                        ) {
+
+                            isSpeaking = false
+                            commandSpeechActive = false
+
+                            Log.e(
+                                TAG,
+                                "TTS ERROR: $utteranceId"
+                            )
+                        }
                     }
                 }
             )
@@ -116,6 +277,12 @@ class AnnouncementManager(
     // AUTOMATIC OBSTACLE ANNOUNCEMENT
     // =========================================================
 
+    /**
+     * Automatically announces the most important obstacle.
+     *
+     * Automatic announcements are suppressed while an explicit
+     * user command is being answered.
+     */
     fun evaluate(
         tracked: List<ObjectTracker.TrackedObject>,
         tracker: ObjectTracker
@@ -125,6 +292,12 @@ class AnnouncementManager(
             return
         }
 
+        // Never interrupt an explicit voice response.
+        if (commandSpeechActive) {
+            return
+        }
+
+        // Don't start another announcement while speaking.
         if (isSpeaking) {
             return
         }
@@ -140,8 +313,7 @@ class AnnouncementManager(
                         lastAnnounced[obj.id] ?: 0L
 
                     val cooldownExpired =
-                        now - lastTime >=
-                                COOLDOWN_MS
+                        now - lastTime >= COOLDOWN_MS
 
                     val veryClose =
                         obj.lastDistance <=
@@ -181,6 +353,7 @@ class AnnouncementManager(
                     }.thenBy {
 
                         it.lastDistance
+
                     }
                 )
 
@@ -199,7 +372,9 @@ class AnnouncementManager(
                 approaching = approaching
             )
 
-        speak(phrase)
+        speakAutomatic(
+            phrase
+        )
 
         lastAnnounced[
             objectToSpeak.id
@@ -209,29 +384,27 @@ class AnnouncementManager(
     }
 
     // =========================================================
-    // WHAT IS IN FRONT
+    // "WHAT'S IN FRONT OF ME?"
     // =========================================================
 
     /**
-     * Example:
+     * Answers:
      *
      * "Hey Dhwani, what's in front of me?"
-     *
-     * Response:
-     *
-     * "I see a laptop and a person in front of you."
      */
     fun announceWhatIsInFront(
         tracked: List<ObjectTracker.TrackedObject>
     ) {
 
-        if (isSpeaking) {
+        if (
+            !canStartCommandSpeech()
+        ) {
             return
         }
 
         if (tracked.isEmpty()) {
 
-            speak(
+            speakCommand(
                 "I don't see anything in front of you."
             )
 
@@ -247,30 +420,44 @@ class AnnouncementManager(
                 }.thenBy {
 
                     zonePriority(it)
+
                 }
             )
 
         val labels =
             sortedObjects
                 .map {
-                    friendlyLabel(it.label)
+                    friendlyLabel(
+                        it.label
+                    )
                 }
                 .distinct()
 
-        val phrase =
-            when (labels.size) {
+        if (labels.isEmpty()) {
 
-                1 -> {
+            speakCommand(
+                "I don't see anything in front of you."
+            )
+
+            return
+        }
+
+        val phrase =
+            when {
+
+                labels.size == 1 -> {
 
                     val label =
                         labels[0]
 
-                    "I see ${articleFor(label)}${
+                    "I see ${
+                        articleFor(label)
+                    }${
                         label.lowercase()
                     } in front of you."
                 }
 
-                2 -> {
+                labels.size == 2 -> {
 
                     val first =
                         labels[0]
@@ -278,9 +465,13 @@ class AnnouncementManager(
                     val second =
                         labels[1]
 
-                    "I see ${articleFor(first)}${
+                    "I see ${
+                        articleFor(first)
+                    }${
                         first.lowercase()
-                    } and ${articleFor(second)}${
+                    } and ${
+                        articleFor(second)
+                    }${
                         second.lowercase()
                     } in front of you."
                 }
@@ -292,7 +483,11 @@ class AnnouncementManager(
                             .dropLast(1)
                             .joinToString(", ") {
 
-                                "a ${it.lowercase()}"
+                                "${
+                                    articleFor(it)
+                                }${
+                                    it.lowercase()
+                                }"
                             }
 
                     val last =
@@ -300,117 +495,92 @@ class AnnouncementManager(
 
                     "I see $beginning and ${
                         articleFor(last)
-                    }${last.lowercase()} in front of you."
+                    }${
+                        last.lowercase()
+                    } in front of you."
                 }
             }
 
-        speak(phrase)
+        speakCommand(
+            phrase
+        )
     }
 
     // =========================================================
-    // READ COMMAND
+    // READ COMMAND FALLBACK
     // =========================================================
 
     /**
-     * Handles:
+     * This method is only a fallback description.
      *
-     * "Hey Dhwani, read"
-     * "Hey Dhwani, read this"
+     * Actual OCR is handled by DhwaniPipeline -> TextReader.
      *
-     * Current implementation reads the detected scene.
+     * If OCR finds text, DhwaniPipeline should call:
      *
-     * Example:
+     *     modeBEngine().speak(text)
      *
-     * "I can see a laptop, a chair and a person."
+     * If OCR finds nothing:
      *
-     * If nothing is detected:
-     *
-     * "There is nothing to read."
-     *
-     * IMPORTANT:
-     *
-     * This method is intentionally separate from
-     * announceWhatIsInFront().
-     *
-     * Later we can connect OCR here to actually read
-     * text from books, signs, documents, etc.
+     *     modeBEngine().speak(
+     *         "I cannot find any readable text."
+     *     )
      */
     fun announceRead(
         tracked: List<ObjectTracker.TrackedObject>
     ) {
 
-        /*
-         * The voice command should take priority.
-         *
-         * We don't want an automatic warning to interrupt
-         * the response.
-         */
-        if (isSpeaking) {
+        if (
+            !canStartCommandSpeech()
+        ) {
             return
         }
 
         if (tracked.isEmpty()) {
 
-            speak(
-                "There is nothing to read."
+            speakCommand(
+                "I cannot find any readable text."
             )
 
             return
         }
 
-        /*
-         * Sort closest objects first.
-         */
-        val sorted =
-            tracked.sortedBy {
-                it.lastDistance
-            }
-
-        /*
-         * Remove duplicate labels.
-         *
-         * Example:
-         *
-         * laptop
-         * laptop
-         * laptop
-         * chair
-         *
-         * becomes:
-         *
-         * laptop
-         * chair
-         */
         val labels =
-            sorted
+            tracked
+                .sortedBy {
+                    it.lastDistance
+                }
                 .map {
-                    friendlyLabel(it.label)
+                    friendlyLabel(
+                        it.label
+                    )
                 }
                 .distinct()
 
         if (labels.isEmpty()) {
 
-            speak(
-                "There is nothing to read."
+            speakCommand(
+                "I cannot find any readable text."
             )
 
             return
         }
 
         val phrase =
-            when (labels.size) {
+            when {
 
-                1 -> {
+                labels.size == 1 -> {
 
                     val label =
                         labels[0]
 
-                    "I can see ${articleFor(label)}${
+                    "I can see ${
+                        articleFor(label)
+                    }${
                         label.lowercase()
                     }."
                 }
 
-                2 -> {
+                labels.size == 2 -> {
 
                     val first =
                         labels[0]
@@ -418,9 +588,13 @@ class AnnouncementManager(
                     val second =
                         labels[1]
 
-                    "I can see ${articleFor(first)}${
+                    "I can see ${
+                        articleFor(first)
+                    }${
                         first.lowercase()
-                    } and ${articleFor(second)}${
+                    } and ${
+                        articleFor(second)
+                    }${
                         second.lowercase()
                     }."
                 }
@@ -432,7 +606,9 @@ class AnnouncementManager(
                             .dropLast(1)
                             .joinToString(", ") {
 
-                                "${articleFor(it)}${
+                                "${
+                                    articleFor(it)
+                                }${
                                     it.lowercase()
                                 }"
                             }
@@ -442,11 +618,15 @@ class AnnouncementManager(
 
                     "I can see $beginning and ${
                         articleFor(last)
-                    }${last.lowercase()}."
+                    }${
+                        last.lowercase()
+                    }."
                 }
             }
 
-        speak(phrase)
+        speakCommand(
+            phrase
+        )
     }
 
     // =========================================================
@@ -457,13 +637,15 @@ class AnnouncementManager(
         tracked: List<ObjectTracker.TrackedObject>
     ) {
 
-        if (isSpeaking) {
+        if (
+            !canStartCommandSpeech()
+        ) {
             return
         }
 
         if (tracked.isEmpty()) {
 
-            speak(
+            speakCommand(
                 "I don't see anything in front of you."
             )
 
@@ -473,10 +655,13 @@ class AnnouncementManager(
         val first =
             tracked.minByOrNull {
                 it.lastDistance
-            } ?: return
+            }
+                ?: return
 
         val label =
-            friendlyLabel(first.label)
+            friendlyLabel(
+                first.label
+            )
 
         val zone =
             Zone.fromNormalizedX(
@@ -514,7 +699,179 @@ class AnnouncementManager(
                 }, $distance."
             }
 
-        speak(phrase)
+        speakCommand(
+            phrase
+        )
+    }
+
+    // =========================================================
+    // PUBLIC SPEAK
+    // =========================================================
+
+    /**
+     * Public speech entry point.
+     *
+     * Use this for:
+     *
+     * - OCR result
+     * - "I cannot find any readable text"
+     * - other explicit responses
+     */
+    fun speak(
+        phrase: String
+    ) {
+
+        if (phrase.isBlank()) {
+            return
+        }
+
+        speakCommand(
+            phrase
+        )
+    }
+
+    // =========================================================
+    // COMMAND SPEECH
+    // =========================================================
+
+    /**
+     * Checks whether a new explicit response can start.
+     */
+    private fun canStartCommandSpeech(): Boolean {
+
+        val now =
+            System.currentTimeMillis()
+
+        if (
+            now - lastCommandSpeechTime <
+            COMMAND_SPEECH_COOLDOWN_MS
+        ) {
+
+            Log.d(
+                TAG,
+                "Command speech ignored because of cooldown"
+            )
+
+            return false
+        }
+
+        lastCommandSpeechTime =
+            now
+
+        return true
+    }
+
+    /**
+     * Speaks a user-requested response.
+     *
+     * QUEUE_FLUSH is intentional.
+     *
+     * If an automatic warning is currently playing,
+     * the user's command response takes priority.
+     */
+    private fun speakCommand(
+        phrase: String
+    ) {
+
+        if (phrase.isBlank()) {
+            return
+        }
+
+        val utteranceId =
+            "dhwani_command_${System.nanoTime()}"
+
+        currentUtteranceId =
+            utteranceId
+
+        commandSpeechActive =
+            true
+
+        isSpeaking =
+            true
+
+        Log.d(
+            TAG,
+            "COMMAND SPEAK: [$phrase]"
+        )
+
+        try {
+
+            tts.stop()
+
+            tts.speak(
+                phrase,
+                TextToSpeech.QUEUE_FLUSH,
+                null,
+                utteranceId
+            )
+
+        } catch (e: Exception) {
+
+            Log.e(
+                TAG,
+                "Command TTS failed",
+                e
+            )
+
+            isSpeaking =
+                false
+
+            commandSpeechActive =
+                false
+        }
+    }
+
+    // =========================================================
+    // AUTOMATIC SPEECH
+    // =========================================================
+
+    private fun speakAutomatic(
+        phrase: String
+    ) {
+
+        if (phrase.isBlank()) {
+            return
+        }
+
+        // Explicit command always wins.
+        if (commandSpeechActive) {
+            return
+        }
+
+        val utteranceId =
+            "dhwani_auto_${System.nanoTime()}"
+
+        currentUtteranceId =
+            utteranceId
+
+        isSpeaking =
+            true
+
+        Log.d(
+            TAG,
+            "AUTOMATIC SPEAK: [$phrase]"
+        )
+
+        try {
+
+            tts.speak(
+                phrase,
+                TextToSpeech.QUEUE_FLUSH,
+                null,
+                utteranceId
+            )
+
+        } catch (e: Exception) {
+
+            Log.e(
+                TAG,
+                "Automatic TTS failed",
+                e
+            )
+
+            isSpeaking =
+                false
+        }
     }
 
     // =========================================================
@@ -527,7 +884,9 @@ class AnnouncementManager(
     ): String {
 
         val label =
-            friendlyLabel(obj.label)
+            friendlyLabel(
+                obj.label
+            )
 
         val zone =
             Zone.fromNormalizedX(
@@ -536,7 +895,9 @@ class AnnouncementManager(
 
         if (approaching) {
 
-            return if (zone == Zone.CENTER) {
+            return if (
+                zone == Zone.CENTER
+            ) {
 
                 "$label approaching"
 
@@ -567,7 +928,9 @@ class AnnouncementManager(
                     "far ahead"
             }
 
-        return if (zone == Zone.CENTER) {
+        return if (
+            zone == Zone.CENTER
+        ) {
 
             "$label $distanceDescription"
 
@@ -580,7 +943,7 @@ class AnnouncementManager(
     }
 
     // =========================================================
-    // FRIENDLY LABELS
+    // FRIENDLY LABEL
     // =========================================================
 
     private fun friendlyLabel(
@@ -627,49 +990,12 @@ class AnnouncementManager(
             "suitcase" ->
                 "Suitcase"
 
-            "refrigerator" ->
-                "Refrigerator"
-
-            "cell phone" ->
-                "Cell phone"
-
-            "keyboard" ->
-                "Keyboard"
-
-            "mouse" ->
-                "Mouse"
-
-            "book" ->
-                "Book"
-
-            "bottle" ->
-                "Bottle"
-
-            "cup" ->
-                "Cup"
-
-            "couch" ->
-                "Couch"
-
-            "dining table" ->
-                "Dining table"
-
-            "tv" ->
-                "TV"
-
-            "microwave" ->
-                "Microwave"
-
-            "oven" ->
-                "Oven"
-
-            "sink" ->
-                "Sink"
-
             else ->
                 label.replaceFirstChar {
 
-                    if (it.isLowerCase()) {
+                    if (
+                        it.isLowerCase()
+                    ) {
 
                         it.titlecase(
                             Locale.US
@@ -692,9 +1018,8 @@ class AnnouncementManager(
     ): String {
 
         return when (
-            label.lowercase(
-                Locale.US
-            ).firstOrNull()
+            label.lowercase(Locale.US)
+                .firstOrNull()
         ) {
 
             'a',
@@ -735,28 +1060,6 @@ class AnnouncementManager(
     }
 
     // =========================================================
-    // SPEAK
-    // =========================================================
-
-    fun speak(
-        phrase: String
-    ) {
-
-        if (phrase.isBlank()) {
-            return
-        }
-
-        isSpeaking = true
-
-        tts.speak(
-            phrase,
-            TextToSpeech.QUEUE_FLUSH,
-            null,
-            "dhwani_${System.nanoTime()}"
-        )
-    }
-
-    // =========================================================
     // CLEANUP
     // =========================================================
 
@@ -775,36 +1078,51 @@ class AnnouncementManager(
             }
 
         oldest?.let {
-            lastAnnounced.remove(it.key)
+            lastAnnounced.remove(
+                it.key
+            )
         }
     }
 
+    // =========================================================
+    // SHUTDOWN
+    // =========================================================
+
     fun shutdown() {
 
-        isSpeaking = false
+        Log.d(
+            TAG,
+            "Shutting down TTS"
+        )
 
-        tts.stop()
+        try {
 
-        tts.shutdown()
+            mainHandler.removeCallbacksAndMessages(
+                null
+            )
+
+            tts.stop()
+
+            tts.shutdown()
+
+        } catch (e: Exception) {
+
+            Log.e(
+                TAG,
+                "Error shutting down TTS",
+                e
+            )
+        }
+
+        isSpeaking =
+            false
+
+        commandSpeechActive =
+            false
+
+        currentUtteranceId =
+            null
 
         lastAnnounced.clear()
-    }
-
-    companion object {
-
-        const val VERY_CLOSE_THRESHOLD =
-            0.20f
-
-        const val CLOSE_THRESHOLD =
-            0.35f
-
-        const val NEARBY_THRESHOLD =
-            0.55f
-
-        const val COOLDOWN_MS =
-            6000L
-
-        const val MAX_COOLDOWN_ENTRIES =
-            200
     }
 }

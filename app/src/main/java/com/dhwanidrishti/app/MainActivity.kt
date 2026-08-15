@@ -477,54 +477,30 @@ class MainActivity : AppCompatActivity() {
                 Manifest.permission.RECORD_AUDIO
             )
 
-
         Log.d(
             "DHWANI_VOICE",
             "startVoiceCommands() permission = $permission"
         )
 
-
         if (
             permission !=
             PackageManager.PERMISSION_GRANTED
         ) {
-
             Log.e(
                 "DHWANI_VOICE",
                 "RECORD_AUDIO permission NOT GRANTED"
             )
-
             return
         }
-
 
         Log.d(
             "DHWANI_VOICE",
             "Starting VoiceCommandManager"
         )
 
-
-        // =====================================================
-        // IMPORTANT
-        // =====================================================
-        //
-        // VoiceCommandManager requires TWO callbacks:
-        //
-        // 1. onWhatIsInFront
-        // 2. onRead
-        //
-        // =====================================================
-
         voiceCommandManager =
-
             VoiceCommandManager(
-
                 context = this,
-
-
-                // -------------------------------------------------
-                // "HEY DHWANI, WHAT'S IN FRONT OF ME"
-                // -------------------------------------------------
 
                 onWhatIsInFront = {
 
@@ -533,14 +509,8 @@ class MainActivity : AppCompatActivity() {
                         "VOICE CALLBACK -> answerWhatIsInFront()"
                     )
 
-
                     pipeline?.answerWhatIsInFront()
                 },
-
-
-                // -------------------------------------------------
-                // "HEY DHWANI, READ"
-                // -------------------------------------------------
 
                 onRead = {
 
@@ -549,16 +519,13 @@ class MainActivity : AppCompatActivity() {
                         "VOICE CALLBACK -> answerRead()"
                     )
 
-
                     pipeline?.answerRead()
                 }
 
             ).also {
-
                 it.start()
             }
     }
-
 
     // =========================================================
     // MODE

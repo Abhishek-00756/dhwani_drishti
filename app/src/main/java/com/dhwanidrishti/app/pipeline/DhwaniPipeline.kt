@@ -1,7 +1,7 @@
 package com.dhwanidrishti.app.pipeline
-
 import android.content.Context
 import android.graphics.Bitmap
+import android.util.Log
 import com.dhwanidrishti.app.audio.SonificationEngine
 import com.dhwanidrishti.app.calibration.CalibrationManager
 import com.dhwanidrishti.app.ml.DepthEstimator
@@ -9,6 +9,8 @@ import com.dhwanidrishti.app.processing.ZoneDistances
 import com.dhwanidrishti.app.processing.ZoneProcessor
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicReference
+import com.dhwanidrishti.app.audio.TextReader
+import java.util.concurrent.atomic.AtomicBoolean
 
 class DhwaniPipeline(
     private val context: Context,
@@ -56,6 +58,12 @@ class DhwaniPipeline(
 
     private val inferenceExecutor =
         Executors.newSingleThreadExecutor()
+
+    private val textReader =
+        TextReader()
+
+    private val pendingRead =
+        AtomicBoolean(false)
 
     // =========================================================
     // SMOOTHED ZONE VALUES
@@ -220,6 +228,74 @@ class DhwaniPipeline(
             val frame =
                 latestFrame.getAndSet(null)
                     ?: continue
+
+            // =================================================
+// VOICE READ -> OCR
+// =================================================
+
+            if (pendingRead.compareAndSet(true, false)) {
+
+                Log.d(
+                    "DHWANI_OCR",
+                    "Running OCR on current camera frame"
+                )
+
+                val ocrBitmap =
+                    try {
+                        frame.copy(
+                            Bitmap.Config.ARGB_8888,
+                            false
+                        )
+                    } catch (e: Exception) {
+
+                        Log.e(
+                            "DHWANI_OCR",
+                            "Could not copy frame for OCR",
+                            e
+                        )
+
+                        null
+                    }
+
+                if (ocrBitmap != null) {
+
+                    textReader.read(
+                        ocrBitmap
+                    ) { text ->
+
+                        if (text.isNullOrBlank()) {
+
+                            Log.d(
+                                "DHWANI_OCR",
+                                "NO TEXT FOUND"
+                            )
+
+                            modeBEngine()
+                                .speak(
+                                    "I cannot find any readable text."
+                                )
+
+                        } else {
+
+                            Log.d(
+                                "DHWANI_OCR",
+                                "TEXT FOUND = [$text]"
+                            )
+
+                            modeBEngine()
+                                .speak(text)
+                        }
+
+                        try {
+                            ocrBitmap.recycle()
+                        } catch (_: Exception) {
+                        }
+                    }
+                }
+            }
+
+
+
 
             val tStart =
                 System.nanoTime()
