@@ -191,7 +191,24 @@ class DhwaniPipeline(
     // =========================================================
     // INFERENCE LOOP
     // =========================================================
+// =========================================================
+// VOICE QUESTION:
+//
+// "HEY DHWANI, READ"
+// =========================================================
 
+    /**
+     * Reads text visible in front of the camera.
+     *
+     * This is triggered by:
+     *
+     * "Hey Dhwani, read"
+     */
+    fun answerRead() {
+
+        modeBEngine()
+            .answerRead()
+    }
     private fun inferenceLoop() {
 
         while (running) {

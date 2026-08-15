@@ -58,6 +58,5 @@ dependencies {
     // ML Kit OCR
     implementation("com.google.mlkit:text-recognition:16.0.1")
 
-    //text recognition
-    implementation("com.google.mlkit:text-recognition:16.0.1")
+
 }

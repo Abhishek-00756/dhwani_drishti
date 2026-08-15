@@ -5,24 +5,32 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
+
 import com.dhwanidrishti.app.audio.VoiceCommandManager
 import com.dhwanidrishti.app.camera.CameraController
 import com.dhwanidrishti.app.pipeline.AppMode
 import com.dhwanidrishti.app.pipeline.DhwaniPipeline
 import com.dhwanidrishti.app.pipeline.PipelineStats
+
 import java.util.Locale
-import android.util.Log
+
 
 class MainActivity : AppCompatActivity() {
+
+    // =========================================================
+    // UI
+    // =========================================================
 
     private lateinit var previewView: PreviewView
     private lateinit var hintView: TextView
@@ -33,23 +41,33 @@ class MainActivity : AppCompatActivity() {
     private lateinit var calibrationStepHint: TextView
     private lateinit var calibrationStatus: TextView
 
-    private var cameraController:
-            CameraController? = null
 
-    private var pipeline:
-            DhwaniPipeline? = null
+    // =========================================================
+    // CONTROLLERS
+    // =========================================================
 
-    private var voiceCommandManager:
-            VoiceCommandManager? = null
+    private var cameraController: CameraController? = null
+
+    private var pipeline: DhwaniPipeline? = null
+
+    private var voiceCommandManager: VoiceCommandManager? = null
+
+
+    // =========================================================
+    // PIPELINE STATS
+    // =========================================================
 
     @Volatile
-    private var pipelineStats:
-            PipelineStats? = null
+    private var pipelineStats: PipelineStats? = null
+
+
+    // =========================================================
+    // UI HANDLER
+    // =========================================================
 
     private val uiHandler =
-        Handler(
-            Looper.getMainLooper()
-        )
+        Handler(Looper.getMainLooper())
+
 
     // =========================================================
     // CAMERA PERMISSION
@@ -70,6 +88,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+
     // =========================================================
     // AUDIO PERMISSION
     // =========================================================
@@ -86,11 +105,13 @@ class MainActivity : AppCompatActivity() {
             } else {
 
                 /*
-                 * Camera can still work without voice commands.
+                 * Camera can still work without
+                 * voice commands.
                  */
                 startVisionPipeline()
             }
         }
+
 
     // =========================================================
     // ON CREATE
@@ -108,6 +129,11 @@ class MainActivity : AppCompatActivity() {
             R.layout.activity_main
         )
 
+
+        // -----------------------------------------------------
+        // FIND VIEWS
+        // -----------------------------------------------------
+
         previewView =
             findViewById(
                 R.id.previewView
@@ -121,11 +147,6 @@ class MainActivity : AppCompatActivity() {
         statsView =
             findViewById(
                 R.id.statsView
-            )
-
-        previewView.contentDescription =
-            getString(
-                R.string.preview_content_description
             )
 
         calibrationPanel =
@@ -148,12 +169,28 @@ class MainActivity : AppCompatActivity() {
                 R.id.modeToggle
             )
 
+
+        // -----------------------------------------------------
+        // ACCESSIBILITY
+        // -----------------------------------------------------
+
+        previewView.contentDescription =
+            getString(
+                R.string.preview_content_description
+            )
+
+
+        // -----------------------------------------------------
+        // CALIBRATION BUTTONS
+        // -----------------------------------------------------
+
         findViewById<Button>(
             R.id.btnRecordNear
         ).setOnClickListener {
 
             recordCalibrationNear()
         }
+
 
         findViewById<Button>(
             R.id.btnRecordFar
@@ -162,12 +199,14 @@ class MainActivity : AppCompatActivity() {
             recordCalibrationFar()
         }
 
+
         findViewById<Button>(
             R.id.btnCalibrationDone
         ).setOnClickListener {
 
             finishCalibration()
         }
+
 
         findViewById<Button>(
             R.id.btnCalibrationSkip
@@ -176,13 +215,24 @@ class MainActivity : AppCompatActivity() {
             skipCalibration()
         }
 
+
+        // -----------------------------------------------------
+        // MODE TOGGLE
+        // -----------------------------------------------------
+
         modeToggle.setOnClickListener {
 
             cycleMode()
         }
 
+
+        // -----------------------------------------------------
+        // REQUEST CAMERA
+        // -----------------------------------------------------
+
         requestCameraPermission()
     }
+
 
     // =========================================================
     // CAMERA PERMISSION
@@ -195,11 +245,11 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.CAMERA
-            ) ==
-                    PackageManager.PERMISSION_GRANTED -> {
+            ) == PackageManager.PERMISSION_GRANTED -> {
 
                 requestAudioPermission()
             }
+
 
             shouldShowRequestPermissionRationale(
                 Manifest.permission.CAMERA
@@ -207,6 +257,7 @@ class MainActivity : AppCompatActivity() {
 
                 showPermissionRationaleDialog()
             }
+
 
             else -> {
 
@@ -216,6 +267,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+
 
     // =========================================================
     // AUDIO PERMISSION
@@ -228,11 +280,11 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.RECORD_AUDIO
-            ) ==
-                    PackageManager.PERMISSION_GRANTED -> {
+            ) == PackageManager.PERMISSION_GRANTED -> {
 
                 startVisionPipeline()
             }
+
 
             else -> {
 
@@ -243,19 +295,23 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+
     // =========================================================
-    // PERMISSION DIALOG
+    // PERMISSION RATIONALE
     // =========================================================
 
     private fun showPermissionRationaleDialog() {
 
         AlertDialog.Builder(this)
+
             .setTitle(
                 R.string.permission_rationale_title
             )
+
             .setMessage(
                 R.string.permission_rationale_message
             )
+
             .setPositiveButton(
                 R.string.permission_rationale_continue
             ) { _, _ ->
@@ -264,22 +320,32 @@ class MainActivity : AppCompatActivity() {
                     Manifest.permission.CAMERA
                 )
             }
+
             .setNegativeButton(
                 android.R.string.cancel,
                 null
             )
+
             .show()
     }
+
+
+    // =========================================================
+    // PERMISSION DENIED
+    // =========================================================
 
     private fun showPermissionDeniedDialog() {
 
         AlertDialog.Builder(this)
+
             .setTitle(
                 R.string.permission_denied_title
             )
+
             .setMessage(
                 R.string.permission_denied_message
             )
+
             .setPositiveButton(
                 R.string.permission_retry
             ) { _, _ ->
@@ -288,15 +354,18 @@ class MainActivity : AppCompatActivity() {
                     Manifest.permission.CAMERA
                 )
             }
+
             .setNegativeButton(
                 android.R.string.cancel,
                 null
             )
+
             .show()
     }
 
+
     // =========================================================
-    // START PIPELINE
+    // START VISION PIPELINE
     // =========================================================
 
     private fun startVisionPipeline() {
@@ -305,24 +374,33 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+
+        // -----------------------------------------------------
+        // CREATE PIPELINE
+        // -----------------------------------------------------
+
         val p =
             DhwaniPipeline(
 
                 applicationContext,
 
                 onStats = {
+
                     pipelineStats = it
                 },
 
                 onCalibrationSample = {
 
                     uiHandler.post {
+
                         refreshCalibrationStatus()
                     }
                 }
             )
 
+
         pipeline = p
+
 
         // -----------------------------------------------------
         // CAMERA
@@ -330,16 +408,28 @@ class MainActivity : AppCompatActivity() {
 
         cameraController =
             CameraController(
+
                 this,
+
                 this,
+
                 previewView,
+
                 p::submitFrame
+
             ).also {
+
                 it.start()
             }
 
+
+        // -----------------------------------------------------
+        // HIDE INITIAL HINT
+        // -----------------------------------------------------
+
         hintView.visibility =
             View.GONE
+
 
         // -----------------------------------------------------
         // CALIBRATION
@@ -350,17 +440,20 @@ class MainActivity : AppCompatActivity() {
             showCalibrationPanel()
         }
 
+
         // -----------------------------------------------------
         // MODE
         // -----------------------------------------------------
 
         refreshModeLabel()
 
+
         // -----------------------------------------------------
         // VOICE COMMANDS
         // -----------------------------------------------------
 
         startVoiceCommands()
+
 
         // -----------------------------------------------------
         // STATS
@@ -370,6 +463,7 @@ class MainActivity : AppCompatActivity() {
             uiStatsRunnable
         )
     }
+
 
     // =========================================================
     // VOICE COMMANDS
@@ -383,12 +477,17 @@ class MainActivity : AppCompatActivity() {
                 Manifest.permission.RECORD_AUDIO
             )
 
+
         Log.d(
             "DHWANI_VOICE",
             "startVoiceCommands() permission = $permission"
         )
 
-        if (permission != PackageManager.PERMISSION_GRANTED) {
+
+        if (
+            permission !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
 
             Log.e(
                 "DHWANI_VOICE",
@@ -398,14 +497,34 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+
         Log.d(
             "DHWANI_VOICE",
             "Starting VoiceCommandManager"
         )
 
+
+        // =====================================================
+        // IMPORTANT
+        // =====================================================
+        //
+        // VoiceCommandManager requires TWO callbacks:
+        //
+        // 1. onWhatIsInFront
+        // 2. onRead
+        //
+        // =====================================================
+
         voiceCommandManager =
+
             VoiceCommandManager(
+
                 context = this,
+
+
+                // -------------------------------------------------
+                // "HEY DHWANI, WHAT'S IN FRONT OF ME"
+                // -------------------------------------------------
 
                 onWhatIsInFront = {
 
@@ -414,7 +533,24 @@ class MainActivity : AppCompatActivity() {
                         "VOICE CALLBACK -> answerWhatIsInFront()"
                     )
 
+
                     pipeline?.answerWhatIsInFront()
+                },
+
+
+                // -------------------------------------------------
+                // "HEY DHWANI, READ"
+                // -------------------------------------------------
+
+                onRead = {
+
+                    Log.d(
+                        "DHWANI_VOICE",
+                        "VOICE CALLBACK -> answerRead()"
+                    )
+
+
+                    pipeline?.answerRead()
                 }
 
             ).also {
@@ -422,6 +558,8 @@ class MainActivity : AppCompatActivity() {
                 it.start()
             }
     }
+
+
     // =========================================================
     // MODE
     // =========================================================
@@ -432,7 +570,9 @@ class MainActivity : AppCompatActivity() {
             pipeline
                 ?: return
 
+
         p.mode =
+
             when (p.mode) {
 
                 AppMode.SOUNDSCAPE ->
@@ -445,23 +585,30 @@ class MainActivity : AppCompatActivity() {
                     AppMode.SOUNDSCAPE
             }
 
+
         refreshModeLabel()
+
 
         modeToggle.announceForAccessibility(
 
             when (p.mode) {
 
                 AppMode.SOUNDSCAPE ->
+
                     getString(
                         R.string.mode_soundscape_announcement
                     )
 
+
                 AppMode.NARRATED ->
+
                     getString(
                         R.string.mode_narrated_announcement
                     )
 
+
                 AppMode.HYBRID ->
+
                     getString(
                         R.string.mode_hybrid_announcement
                     )
@@ -469,37 +616,52 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+
+    // =========================================================
+    // REFRESH MODE LABEL
+    // =========================================================
+
     private fun refreshModeLabel() {
 
         val p =
             pipeline
                 ?: return
 
+
         val label =
+
             when (p.mode) {
 
                 AppMode.SOUNDSCAPE ->
+
                     getString(
                         R.string.mode_soundscape
                     )
 
+
                 AppMode.NARRATED ->
+
                     getString(
                         R.string.mode_narrated
                     )
 
+
                 AppMode.HYBRID ->
+
                     getString(
                         R.string.mode_hybrid
                     )
             }
 
+
         modeToggle.text =
+
             getString(
                 R.string.mode_toggle_format,
                 label
             )
     }
+
 
     // =========================================================
     // CALIBRATION
@@ -510,17 +672,26 @@ class MainActivity : AppCompatActivity() {
         calibrationPanel.visibility =
             View.VISIBLE
 
+
         refreshCalibrationStatus()
+
 
         calibrationPanel.announceForAccessibility(
 
             getString(
                 R.string.calibration_intro
             ) +
+
                     " " +
+
                     calibrationStepHint.text
         )
     }
+
+
+    // =========================================================
+    // HIDE CALIBRATION
+    // =========================================================
 
     private fun hideCalibrationPanel() {
 
@@ -528,13 +699,20 @@ class MainActivity : AppCompatActivity() {
             View.GONE
     }
 
+
+    // =========================================================
+    // REFRESH CALIBRATION STATUS
+    // =========================================================
+
     private fun refreshCalibrationStatus() {
 
         val c =
             pipeline?.calibration
                 ?: return
 
+
         val near =
+
             if (c.nearRaw.isFinite()) {
 
                 getString(
@@ -548,7 +726,9 @@ class MainActivity : AppCompatActivity() {
                 )
             }
 
+
         val far =
+
             if (c.farRaw.isFinite()) {
 
                 getString(
@@ -562,14 +742,18 @@ class MainActivity : AppCompatActivity() {
                 )
             }
 
+
         calibrationStatus.text =
+
             getString(
                 R.string.calibration_status,
                 near,
                 far
             )
 
+
         calibrationStepHint.text =
+
             if (!c.nearRaw.isFinite()) {
 
                 getString(
@@ -584,53 +768,84 @@ class MainActivity : AppCompatActivity() {
             }
     }
 
+
+    // =========================================================
+    // RECORD NEAR
+    // =========================================================
+
     private fun recordCalibrationNear() {
 
         pipeline?.recordCalibrationNear()
 
+
         refreshCalibrationStatus()
 
+
         calibrationPanel.announceForAccessibility(
+
             getString(
                 R.string.calibration_record_near_announcement
             )
         )
     }
 
+
+    // =========================================================
+    // RECORD FAR
+    // =========================================================
+
     private fun recordCalibrationFar() {
 
         pipeline?.recordCalibrationFar()
 
+
         refreshCalibrationStatus()
 
+
         calibrationPanel.announceForAccessibility(
+
             getString(
                 R.string.calibration_record_far_announcement
             )
         )
     }
 
+
+    // =========================================================
+    // FINISH CALIBRATION
+    // =========================================================
+
     private fun finishCalibration() {
 
         hideCalibrationPanel()
 
+
         calibrationPanel.announceForAccessibility(
+
             getString(
                 R.string.calibration_done_announcement
             )
         )
     }
 
+
+    // =========================================================
+    // SKIP CALIBRATION
+    // =========================================================
+
     private fun skipCalibration() {
 
         hideCalibrationPanel()
 
+
         calibrationPanel.announceForAccessibility(
+
             getString(
                 R.string.calibration_skip_announcement
             )
         )
     }
+
 
     // =========================================================
     // UI STATS
@@ -639,10 +854,13 @@ class MainActivity : AppCompatActivity() {
     private var lastFrames =
         0L
 
+
     private var lastUpdateNs =
         System.nanoTime()
 
+
     private val uiStatsRunnable =
+
         object : Runnable {
 
             override fun run() {
@@ -650,13 +868,18 @@ class MainActivity : AppCompatActivity() {
                 val now =
                     System.nanoTime()
 
+
                 val dtSeconds =
+
                     (
-                            now - lastUpdateNs
+                            now -
+                                    lastUpdateNs
                             ) / 1_000_000_000.0
+
 
                 val stats =
                     pipelineStats
+
 
                 if (
                     dtSeconds > 0 &&
@@ -664,15 +887,19 @@ class MainActivity : AppCompatActivity() {
                 ) {
 
                     val fps =
+
                         (
                                 stats.frames -
                                         lastFrames
                                 ) / dtSeconds
 
+
                     statsView.text =
+
                         getString(
 
                             R.string.stats_format,
+
 
                             String.format(
                                 Locale.US,
@@ -680,11 +907,13 @@ class MainActivity : AppCompatActivity() {
                                 fps
                             ),
 
+
                             String.format(
                                 Locale.US,
                                 "%.1f",
                                 stats.inferenceMs
                             ),
+
 
                             String.format(
                                 Locale.US,
@@ -692,15 +921,19 @@ class MainActivity : AppCompatActivity() {
                                 stats.totalMs
                             ),
 
+
                             stats.objectsTracked.toString()
                         )
+
 
                     lastFrames =
                         stats.frames
                 }
 
+
                 lastUpdateNs =
                     now
+
 
                 uiHandler.postDelayed(
                     this,
@@ -709,27 +942,58 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+
     // =========================================================
-    // DESTROY
+    // ON DESTROY
     // =========================================================
 
     override fun onDestroy() {
+
+        // -----------------------------------------------------
+        // STOP UI STATS
+        // -----------------------------------------------------
 
         uiHandler.removeCallbacks(
             uiStatsRunnable
         )
 
+
+        // -----------------------------------------------------
+        // STOP VOICE
+        // -----------------------------------------------------
+
         voiceCommandManager?.stop()
+
+
+        // -----------------------------------------------------
+        // STOP CAMERA
+        // -----------------------------------------------------
 
         cameraController?.stop()
 
+
+        // -----------------------------------------------------
+        // STOP PIPELINE
+        // -----------------------------------------------------
+
         pipeline?.stop()
 
-        cameraController = null
 
-        pipeline = null
+        // -----------------------------------------------------
+        // CLEAR REFERENCES
+        // -----------------------------------------------------
 
-        voiceCommandManager = null
+        cameraController =
+            null
+
+
+        pipeline =
+            null
+
+
+        voiceCommandManager =
+            null
+
 
         super.onDestroy()
     }
