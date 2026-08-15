@@ -214,8 +214,17 @@ class DhwaniPipeline(
      */
     fun answerRead() {
 
-        modeBEngine()
-            .answerRead()
+        Log.d(
+            "DHWANI_OCR",
+            "READ REQUEST RECEIVED"
+        )
+
+        pendingRead.set(true)
+
+        Log.d(
+            "DHWANI_OCR",
+            "OCR scheduled for next camera frame"
+        )
     }
     private fun inferenceLoop() {
 
