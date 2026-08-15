@@ -20,6 +20,7 @@ import com.dhwanidrishti.app.pipeline.AppMode
 import com.dhwanidrishti.app.pipeline.DhwaniPipeline
 import com.dhwanidrishti.app.pipeline.PipelineStats
 import java.util.Locale
+import android.util.Log
 
 class MainActivity : AppCompatActivity() {
 
@@ -376,30 +377,43 @@ class MainActivity : AppCompatActivity() {
 
     private fun startVoiceCommands() {
 
-        if (
+        val permission =
             ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.RECORD_AUDIO
-            ) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
+            )
+
+        Log.d(
+            "DHWANI_VOICE",
+            "startVoiceCommands() permission = $permission"
+        )
+
+        if (permission != PackageManager.PERMISSION_GRANTED) {
+
+            Log.e(
+                "DHWANI_VOICE",
+                "RECORD_AUDIO permission NOT GRANTED"
+            )
+
             return
         }
 
+        Log.d(
+            "DHWANI_VOICE",
+            "Starting VoiceCommandManager"
+        )
+
         voiceCommandManager =
             VoiceCommandManager(
-
                 context = this,
 
                 onWhatIsInFront = {
 
-                    /*
-                     * Voice callback may come from the speech
-                     * recognition thread.
-                     *
-                     * DhwaniPipeline itself is thread-safe for
-                     * this operation.
-                     */
+                    Log.d(
+                        "DHWANI_VOICE",
+                        "VOICE CALLBACK -> answerWhatIsInFront()"
+                    )
+
                     pipeline?.answerWhatIsInFront()
                 }
 
@@ -408,7 +422,6 @@ class MainActivity : AppCompatActivity() {
                 it.start()
             }
     }
-
     // =========================================================
     // MODE
     // =========================================================
