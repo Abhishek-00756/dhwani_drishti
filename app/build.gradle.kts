@@ -55,4 +55,9 @@ dependencies {
 
     // Coroutines for pipeline orchestration
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // ML Kit OCR
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+
+    //text recognition
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 }

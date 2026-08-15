@@ -16,20 +16,50 @@ class DhwaniPipeline(
     private val onCalibrationSample: (CalibrationPoint) -> Unit = {},
 ) {
 
+    // =========================================================
+    // DEPTH ESTIMATOR
+    // =========================================================
+
     private val depthEstimator =
         DepthEstimator(context)
+
+    // =========================================================
+    // CALIBRATION
+    // =========================================================
 
     val calibration =
         CalibrationManager(context)
 
+    // =========================================================
+    // SOUNDSCAPE
+    // =========================================================
+
     private val sonification =
         SonificationEngine()
 
+    // =========================================================
+    // FRAME BUFFER
+    // =========================================================
+
+    /**
+     * Camera continuously submits frames here.
+     *
+     * Only the newest frame is kept.
+     * Old frames are discarded.
+     */
     private val latestFrame =
         AtomicReference<Bitmap?>(null)
 
+    // =========================================================
+    // INFERENCE THREAD
+    // =========================================================
+
     private val inferenceExecutor =
         Executors.newSingleThreadExecutor()
+
+    // =========================================================
+    // SMOOTHED ZONE VALUES
+    // =========================================================
 
     private var smoothed =
         ZoneDistances(
@@ -38,20 +68,46 @@ class DhwaniPipeline(
             0.5f
         )
 
+    // =========================================================
+    // PERFORMANCE STATS
+    // =========================================================
+
     private val stats =
         PipelineStats()
 
+    // =========================================================
+    // PIPELINE STATE
+    // =========================================================
+
     @Volatile
     private var running = true
+
+    // =========================================================
+    // CALIBRATION REQUEST
+    // =========================================================
 
     @Volatile
     private var pendingCalibrationPoint:
             CalibrationPoint? = null
 
+    // =========================================================
+    // APP MODE
+    // =========================================================
+
     @Volatile
     var mode: AppMode =
         AppMode.SOUNDSCAPE
 
+    // =========================================================
+    // MODE B
+    // =========================================================
+
+    /**
+     * Mode B is loaded lazily.
+     *
+     * This prevents YOLO + TTS from loading
+     * when the user only uses Soundscape mode.
+     */
     private var modeB:
             ModeBEngine? = null
 
@@ -61,8 +117,10 @@ class DhwaniPipeline(
 
     init {
 
+        // Start continuous soundscape engine.
         sonification.start()
 
+        // Start inference worker.
         inferenceExecutor.execute {
             inferenceLoop()
         }
@@ -72,6 +130,11 @@ class DhwaniPipeline(
     // CAMERA
     // =========================================================
 
+    /**
+     * Called by CameraController.
+     *
+     * The newest frame replaces the previous one.
+     */
     fun submitFrame(
         bitmap: Bitmap
     ) {
@@ -85,12 +148,20 @@ class DhwaniPipeline(
     // CALIBRATION
     // =========================================================
 
+    /**
+     * Request the next processed frame to be used
+     * as the NEAR calibration sample.
+     */
     fun recordCalibrationNear() {
 
         pendingCalibrationPoint =
             CalibrationPoint.NEAR
     }
 
+    /**
+     * Request the next processed frame to be used
+     * as the FAR calibration sample.
+     */
     fun recordCalibrationFar() {
 
         pendingCalibrationPoint =
@@ -105,15 +176,14 @@ class DhwaniPipeline(
      * Answers:
      *
      * "Hey Dhwani, what's in front of me?"
+     *
+     * This works independently of the current mode.
+     *
+     * If Mode B has not been initialized yet,
+     * it will be created here.
      */
     fun answerWhatIsInFront() {
 
-        /*
-         * If Mode B hasn't been initialized yet, initialize it.
-         *
-         * This also means the voice command works even if the
-         * user has not manually switched to Narrated mode.
-         */
         modeBEngine()
             .answerWhatIsInFront()
     }
@@ -126,6 +196,10 @@ class DhwaniPipeline(
 
         while (running) {
 
+            // -------------------------------------------------
+            // GET LATEST CAMERA FRAME
+            // -------------------------------------------------
+
             val frame =
                 latestFrame.getAndSet(null)
                     ?: continue
@@ -134,7 +208,7 @@ class DhwaniPipeline(
                 System.nanoTime()
 
             // -------------------------------------------------
-            // MiDaS
+            // MiDaS DEPTH
             // -------------------------------------------------
 
             val rawDepth =
@@ -181,17 +255,25 @@ class DhwaniPipeline(
             // NORMALIZE DEPTH
             // -------------------------------------------------
 
+            /**
+             * Converts raw MiDaS depth into:
+             *
+             * 0.0 = far
+             * 1.0 = close
+             */
             val closeness =
                 calibration.normalize(
                     rawDepth
                 )
 
-            // -------------------------------------------------
+            // =================================================
             // MODE A / HYBRID
-            // -------------------------------------------------
+            // =================================================
 
             if (mode == AppMode.NARRATED) {
 
+                // Narrated mode does not need the continuous
+                // soundscape tone.
                 sonification.muted =
                     true
 
@@ -200,15 +282,35 @@ class DhwaniPipeline(
                 sonification.muted =
                     false
 
+                // -------------------------------------------------
+                // HYBRID DUCKING
+                // -------------------------------------------------
+
+                /**
+                 * When voice is speaking,
+                 * reduce soundscape volume.
+                 */
                 sonification.setDucking(
                     modeB?.isSpeaking == true
                 )
+
+                // -------------------------------------------------
+                // ZONE PROCESSING
+                // -------------------------------------------------
 
                 val zones =
                     ZoneProcessor.processZones(
                         closeness
                     )
 
+                // -------------------------------------------------
+                // EMA SMOOTHING
+                // -------------------------------------------------
+
+                /**
+                 * Prevents sound from jumping around
+                 * because of small depth fluctuations.
+                 */
                 smoothed =
                     ZoneDistances(
 
@@ -225,14 +327,18 @@ class DhwaniPipeline(
                                     0.4f * zones.right
                     )
 
+                // -------------------------------------------------
+                // UPDATE AUDIO
+                // -------------------------------------------------
+
                 sonification.updateFromZones(
                     smoothed
                 )
             }
 
-            // -------------------------------------------------
+            // =================================================
             // MODE B
-            // -------------------------------------------------
+            // =================================================
 
             if (
                 mode == AppMode.NARRATED ||
@@ -246,11 +352,15 @@ class DhwaniPipeline(
                     )
             }
 
+            // =================================================
+            // TIMING
+            // =================================================
+
             val tEnd =
                 System.nanoTime()
 
             // -------------------------------------------------
-            // STATS
+            // MODEL TIME
             // -------------------------------------------------
 
             stats.inferenceMs =
@@ -258,20 +368,40 @@ class DhwaniPipeline(
                         tModel - tStart
                         ) / 1_000_000f
 
+            // -------------------------------------------------
+            // PROCESSING TIME
+            // -------------------------------------------------
+
             stats.processMs =
                 (
                         tEnd - tModel
                         ) / 1_000_000f
+
+            // -------------------------------------------------
+            // TOTAL TIME
+            // -------------------------------------------------
 
             stats.totalMs =
                 (
                         tEnd - tStart
                         ) / 1_000_000f
 
+            // -------------------------------------------------
+            // TRACKED OBJECTS
+            // -------------------------------------------------
+
             stats.objectsTracked =
                 modeB?.trackedCount ?: 0
 
+            // -------------------------------------------------
+            // FRAME COUNTER
+            // -------------------------------------------------
+
             stats.frames++
+
+            // -------------------------------------------------
+            // SEND STATS TO UI
+            // -------------------------------------------------
 
             onStats(
                 stats
@@ -283,6 +413,17 @@ class DhwaniPipeline(
     // MODE B LAZY INITIALIZATION
     // =========================================================
 
+    /**
+     * Creates ModeBEngine only when required.
+     *
+     * Mode B contains:
+     *
+     * YOLO
+     * ObjectTracker
+     * RiskEngine
+     * AnnouncementManager
+     * TTS
+     */
     private fun modeBEngine():
             ModeBEngine {
 
@@ -290,14 +431,23 @@ class DhwaniPipeline(
             ?: ModeBEngine(
                 context
             ).also {
+
                 modeB = it
             }
     }
 
     // =========================================================
-    // DEPTH
+    // DEPTH UTILITIES
     // =========================================================
 
+    /**
+     * MiDaS produces inverse depth.
+     *
+     * Larger raw value = closer.
+     *
+     * Therefore the maximum finite value
+     * represents the nearest point.
+     */
     private fun maxRawValue(
         depth: Array<FloatArray>
     ): Float {
@@ -313,6 +463,7 @@ class DhwaniPipeline(
                     value.isFinite() &&
                     value > max
                 ) {
+
                     max = value
                 }
             }
@@ -325,16 +476,23 @@ class DhwaniPipeline(
     // STOP
     // =========================================================
 
+    /**
+     * Releases all resources.
+     */
     fun stop() {
 
         running = false
 
+        // Stop inference worker.
         inferenceExecutor.shutdown()
 
+        // Stop soundscape.
         sonification.stop()
 
+        // Release MiDaS.
         depthEstimator.close()
 
+        // Release Mode B if it was created.
         modeB?.shutdown()
 
         modeB = null
@@ -347,10 +505,19 @@ class DhwaniPipeline(
 
 enum class AppMode {
 
+    /**
+     * Continuous spatial sound.
+     */
     SOUNDSCAPE,
 
+    /**
+     * Spoken object descriptions.
+     */
     NARRATED,
 
+    /**
+     * Soundscape + spoken descriptions.
+     */
     HYBRID
 }
 
@@ -377,7 +544,7 @@ class PipelineStats {
 }
 
 // =============================================================
-// CALIBRATION
+// CALIBRATION POINT
 // =============================================================
 
 enum class CalibrationPoint {

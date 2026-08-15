@@ -11,27 +11,27 @@ import java.util.Locale
 /**
  * Handles all spoken output for Dhwani Drishti.
  *
- * Two types of speech:
+ * Features:
  *
  * 1. Automatic obstacle warnings
- *    Example:
- *    "Laptop very close"
- *    "Person approaching from your right"
+ * 2. "What's in front of me?"
+ * 3. "Read" command
  *
- * 2. On-demand scene description
- *    Triggered by:
- *    "Hey Dhwani, what's in front of me?"
+ * "Read" currently means:
+ * - Describe the visible detected objects.
+ * - If nothing is detected, say:
+ *   "There is nothing to read."
  *
- *    Example:
- *    "I see a laptop and a person in front of you."
+ * OCR can be connected later so "read" can actually read
+ * text/signboards/documents from the camera.
  */
 class AnnouncementManager(
     context: Context
 ) {
 
-    // ---------------------------------------------------------
+    // =========================================================
     // TTS
-    // ---------------------------------------------------------
+    // =========================================================
 
     private val tts: TextToSpeech
 
@@ -39,11 +39,16 @@ class AnnouncementManager(
     var isSpeaking: Boolean = false
         private set
 
-    // ---------------------------------------------------------
-    // Automatic announcement cooldown
-    // ---------------------------------------------------------
+    // =========================================================
+    // AUTOMATIC ANNOUNCEMENT COOLDOWN
+    // =========================================================
 
-    private val lastAnnounced = mutableMapOf<Int, Long>()
+    private val lastAnnounced =
+        mutableMapOf<Int, Long>()
+
+    // =========================================================
+    // INITIALIZATION
+    // =========================================================
 
     init {
 
@@ -64,20 +69,21 @@ class AnnouncementManager(
                     .build()
             )
 
-            // Prefer offline voice when available.
-            val offlineVoice = tts.voices
-                ?.filter {
-                    it.locale.language ==
-                            Locale.getDefault().language &&
-                            !it.isNetworkConnectionRequired
-                }
-                ?.maxByOrNull { it.quality }
+            val offlineVoice =
+                tts.voices
+                    ?.filter {
+                        it.locale.language ==
+                                Locale.getDefault().language &&
+                                !it.isNetworkConnectionRequired
+                    }
+                    ?.maxByOrNull {
+                        it.quality
+                    }
 
             if (offlineVoice != null) {
                 tts.voice = offlineVoice
             }
 
-            // Slightly faster for navigation.
             tts.setSpeechRate(1.05f)
             tts.setPitch(1.0f)
 
@@ -110,9 +116,6 @@ class AnnouncementManager(
     // AUTOMATIC OBSTACLE ANNOUNCEMENT
     // =========================================================
 
-    /**
-     * Automatically announces the most important tracked object.
-     */
     fun evaluate(
         tracked: List<ObjectTracker.TrackedObject>,
         tracker: ObjectTracker
@@ -126,50 +129,69 @@ class AnnouncementManager(
             return
         }
 
-        val now = System.currentTimeMillis()
+        val now =
+            System.currentTimeMillis()
 
-        val candidates = tracked
-            .filter { obj ->
+        val candidates =
+            tracked
+                .filter { obj ->
 
-                val lastTime =
-                    lastAnnounced[obj.id] ?: 0L
+                    val lastTime =
+                        lastAnnounced[obj.id] ?: 0L
 
-                val cooldownExpired =
-                    now - lastTime >= COOLDOWN_MS
+                    val cooldownExpired =
+                        now - lastTime >=
+                                COOLDOWN_MS
 
-                val veryClose =
-                    obj.lastDistance <= VERY_CLOSE_THRESHOLD
+                    val veryClose =
+                        obj.lastDistance <=
+                                VERY_CLOSE_THRESHOLD
 
-                val close =
-                    obj.lastDistance <= CLOSE_THRESHOLD
+                    val close =
+                        obj.lastDistance <=
+                                CLOSE_THRESHOLD
 
-                val approaching =
-                    tracker.isApproaching(obj)
+                    val approaching =
+                        tracker.isApproaching(obj)
 
-                cooldownExpired &&
-                        (veryClose || close || approaching)
-            }
-            .sortedWith(
-                compareBy<ObjectTracker.TrackedObject> {
-
-                    when {
-                        it.lastDistance <= VERY_CLOSE_THRESHOLD -> 0
-                        it.lastDistance <= CLOSE_THRESHOLD -> 1
-                        else -> 2
-                    }
-
-                }.thenBy {
-
-                    it.lastDistance
+                    cooldownExpired &&
+                            (
+                                    veryClose ||
+                                            close ||
+                                            approaching
+                                    )
                 }
-            )
+                .sortedWith(
+                    compareBy<ObjectTracker.TrackedObject> {
+
+                        when {
+
+                            it.lastDistance <=
+                                    VERY_CLOSE_THRESHOLD ->
+                                0
+
+                            it.lastDistance <=
+                                    CLOSE_THRESHOLD ->
+                                1
+
+                            else ->
+                                2
+                        }
+
+                    }.thenBy {
+
+                        it.lastDistance
+                    }
+                )
 
         val objectToSpeak =
             candidates.firstOrNull()
                 ?: return
 
         val approaching =
-            tracker.isApproaching(objectToSpeak)
+            tracker.isApproaching(
+                objectToSpeak
+            )
 
         val phrase =
             buildWarningPhrase(
@@ -187,17 +209,15 @@ class AnnouncementManager(
     }
 
     // =========================================================
-    // "WHAT'S IN FRONT OF ME?"
+    // WHAT IS IN FRONT
     // =========================================================
 
     /**
-     * Gives an on-demand description of the current scene.
-     *
-     * This is called when the user says:
+     * Example:
      *
      * "Hey Dhwani, what's in front of me?"
      *
-     * Example:
+     * Response:
      *
      * "I see a laptop and a person in front of you."
      */
@@ -218,42 +238,18 @@ class AnnouncementManager(
             return
         }
 
-        /*
-         * We consider the complete camera view as the scene
-         * in front of the user.
-         *
-         * Objects are sorted:
-         *
-         * closest first
-         * then center
-         * then left/right
-         */
         val sortedObjects =
-            tracked
-                .sortedWith(
-                    compareBy<ObjectTracker.TrackedObject> {
+            tracked.sortedWith(
+                compareBy<ObjectTracker.TrackedObject> {
 
-                        it.lastDistance
+                    it.lastDistance
 
-                    }.thenBy {
+                }.thenBy {
 
-                        zonePriority(it)
-                    }
-                )
+                    zonePriority(it)
+                }
+            )
 
-        /*
-         * Avoid announcing the same object type multiple times.
-         *
-         * Example:
-         *
-         * laptop
-         * laptop
-         * laptop
-         *
-         * becomes:
-         *
-         * "a laptop"
-         */
         val labels =
             sortedObjects
                 .map {
@@ -265,11 +261,28 @@ class AnnouncementManager(
             when (labels.size) {
 
                 1 -> {
-                    "I see a ${articleFor(labels[0])}${labels[0].lowercase()} in front of you."
+
+                    val label =
+                        labels[0]
+
+                    "I see ${articleFor(label)}${
+                        label.lowercase()
+                    } in front of you."
                 }
 
                 2 -> {
-                    "I see a ${articleFor(labels[0])}${labels[0].lowercase()} and a ${articleFor(labels[1])}${labels[1].lowercase()} in front of you."
+
+                    val first =
+                        labels[0]
+
+                    val second =
+                        labels[1]
+
+                    "I see ${articleFor(first)}${
+                        first.lowercase()
+                    } and ${articleFor(second)}${
+                        second.lowercase()
+                    } in front of you."
                 }
 
                 else -> {
@@ -278,23 +291,168 @@ class AnnouncementManager(
                         labels
                             .dropLast(1)
                             .joinToString(", ") {
-                                "a ${articleFor(it)}${it.lowercase()}"
+
+                                "a ${it.lowercase()}"
                             }
 
                     val last =
-                        "a ${articleFor(labels.last())}${labels.last().lowercase()}"
+                        labels.last()
 
-                    "I see $beginning and $last in front of you."
+                    "I see $beginning and ${
+                        articleFor(last)
+                    }${last.lowercase()} in front of you."
                 }
             }
 
         speak(phrase)
     }
 
+    // =========================================================
+    // READ COMMAND
+    // =========================================================
+
     /**
-     * Gives a slightly more useful spatial answer when there
-     * is only one object.
+     * Handles:
+     *
+     * "Hey Dhwani, read"
+     * "Hey Dhwani, read this"
+     *
+     * Current implementation reads the detected scene.
+     *
+     * Example:
+     *
+     * "I can see a laptop, a chair and a person."
+     *
+     * If nothing is detected:
+     *
+     * "There is nothing to read."
+     *
+     * IMPORTANT:
+     *
+     * This method is intentionally separate from
+     * announceWhatIsInFront().
+     *
+     * Later we can connect OCR here to actually read
+     * text from books, signs, documents, etc.
      */
+    fun announceRead(
+        tracked: List<ObjectTracker.TrackedObject>
+    ) {
+
+        /*
+         * The voice command should take priority.
+         *
+         * We don't want an automatic warning to interrupt
+         * the response.
+         */
+        if (isSpeaking) {
+            return
+        }
+
+        if (tracked.isEmpty()) {
+
+            speak(
+                "There is nothing to read."
+            )
+
+            return
+        }
+
+        /*
+         * Sort closest objects first.
+         */
+        val sorted =
+            tracked.sortedBy {
+                it.lastDistance
+            }
+
+        /*
+         * Remove duplicate labels.
+         *
+         * Example:
+         *
+         * laptop
+         * laptop
+         * laptop
+         * chair
+         *
+         * becomes:
+         *
+         * laptop
+         * chair
+         */
+        val labels =
+            sorted
+                .map {
+                    friendlyLabel(it.label)
+                }
+                .distinct()
+
+        if (labels.isEmpty()) {
+
+            speak(
+                "There is nothing to read."
+            )
+
+            return
+        }
+
+        val phrase =
+            when (labels.size) {
+
+                1 -> {
+
+                    val label =
+                        labels[0]
+
+                    "I can see ${articleFor(label)}${
+                        label.lowercase()
+                    }."
+                }
+
+                2 -> {
+
+                    val first =
+                        labels[0]
+
+                    val second =
+                        labels[1]
+
+                    "I can see ${articleFor(first)}${
+                        first.lowercase()
+                    } and ${articleFor(second)}${
+                        second.lowercase()
+                    }."
+                }
+
+                else -> {
+
+                    val beginning =
+                        labels
+                            .dropLast(1)
+                            .joinToString(", ") {
+
+                                "${articleFor(it)}${
+                                    it.lowercase()
+                                }"
+                            }
+
+                    val last =
+                        labels.last()
+
+                    "I can see $beginning and ${
+                        articleFor(last)
+                    }${last.lowercase()}."
+                }
+            }
+
+        speak(phrase)
+    }
+
+    // =========================================================
+    // DETAILED SCENE
+    // =========================================================
+
     fun announceDetailedScene(
         tracked: List<ObjectTracker.TrackedObject>
     ) {
@@ -304,17 +462,18 @@ class AnnouncementManager(
         }
 
         if (tracked.isEmpty()) {
-            speak("I don't see anything in front of you.")
+
+            speak(
+                "I don't see anything in front of you."
+            )
+
             return
         }
 
-        val sorted =
-            tracked.sortedBy {
-                it.lastDistance
-            }
-
         val first =
-            sorted.first()
+            tracked.minByOrNull {
+                it.lastDistance
+            } ?: return
 
         val label =
             friendlyLabel(first.label)
@@ -327,13 +486,16 @@ class AnnouncementManager(
         val distance =
             when {
 
-                first.lastDistance <= VERY_CLOSE_THRESHOLD ->
+                first.lastDistance <=
+                        VERY_CLOSE_THRESHOLD ->
                     "very close"
 
-                first.lastDistance <= CLOSE_THRESHOLD ->
+                first.lastDistance <=
+                        CLOSE_THRESHOLD ->
                     "close"
 
-                first.lastDistance <= NEARBY_THRESHOLD ->
+                first.lastDistance <=
+                        NEARBY_THRESHOLD ->
                     "nearby"
 
                 else ->
@@ -347,7 +509,9 @@ class AnnouncementManager(
 
             } else {
 
-                "There is a $label to your ${zone.spoken}, $distance."
+                "There is a $label to your ${
+                    zone.spoken
+                }, $distance."
             }
 
         speak(phrase)
@@ -378,20 +542,25 @@ class AnnouncementManager(
 
             } else {
 
-                "$label approaching from your ${zone.spoken}"
+                "$label approaching from your ${
+                    zone.spoken
+                }"
             }
         }
 
         val distanceDescription =
             when {
 
-                obj.lastDistance <= VERY_CLOSE_THRESHOLD ->
+                obj.lastDistance <=
+                        VERY_CLOSE_THRESHOLD ->
                     "very close"
 
-                obj.lastDistance <= CLOSE_THRESHOLD ->
+                obj.lastDistance <=
+                        CLOSE_THRESHOLD ->
                     "close"
 
-                obj.lastDistance <= NEARBY_THRESHOLD ->
+                obj.lastDistance <=
+                        NEARBY_THRESHOLD ->
                     "nearby"
 
                 else ->
@@ -404,7 +573,9 @@ class AnnouncementManager(
 
         } else {
 
-            "$label to your ${zone.spoken}, $distanceDescription"
+            "$label to your ${
+                zone.spoken
+            }, $distanceDescription"
         }
     }
 
@@ -416,61 +587,131 @@ class AnnouncementManager(
         label: String
     ): String {
 
-        return when (label.lowercase(Locale.US)) {
+        return when (
+            label.lowercase(Locale.US)
+        ) {
 
-            "person" -> "Person"
-            "laptop" -> "Laptop"
-            "backpack" -> "Backpack"
-            "chair" -> "Chair"
-            "bicycle" -> "Bicycle"
-            "car" -> "Car"
-            "bus" -> "Bus"
-            "motorcycle" -> "Motorcycle"
-            "truck" -> "Truck"
-            "bench" -> "Bench"
-            "door" -> "Door"
-            "suitcase" -> "Suitcase"
-            "refrigerator" -> "Refrigerator"
-            "cell phone" -> "Cell phone"
-            "keyboard" -> "Keyboard"
-            "mouse" -> "Mouse"
-            "book" -> "Book"
-            "bottle" -> "Bottle"
-            "cup" -> "Cup"
-            "chair" -> "Chair"
-            "couch" -> "Couch"
-            "dining table" -> "Dining table"
-            "tv" -> "TV"
-            "microwave" -> "Microwave"
-            "oven" -> "Oven"
-            "sink" -> "Sink"
+            "person" ->
+                "Person"
+
+            "laptop" ->
+                "Laptop"
+
+            "backpack" ->
+                "Backpack"
+
+            "chair" ->
+                "Chair"
+
+            "bicycle" ->
+                "Bicycle"
+
+            "car" ->
+                "Car"
+
+            "bus" ->
+                "Bus"
+
+            "motorcycle" ->
+                "Motorcycle"
+
+            "truck" ->
+                "Truck"
+
+            "bench" ->
+                "Bench"
+
+            "door" ->
+                "Door"
+
+            "suitcase" ->
+                "Suitcase"
+
+            "refrigerator" ->
+                "Refrigerator"
+
+            "cell phone" ->
+                "Cell phone"
+
+            "keyboard" ->
+                "Keyboard"
+
+            "mouse" ->
+                "Mouse"
+
+            "book" ->
+                "Book"
+
+            "bottle" ->
+                "Bottle"
+
+            "cup" ->
+                "Cup"
+
+            "couch" ->
+                "Couch"
+
+            "dining table" ->
+                "Dining table"
+
+            "tv" ->
+                "TV"
+
+            "microwave" ->
+                "Microwave"
+
+            "oven" ->
+                "Oven"
+
+            "sink" ->
+                "Sink"
 
             else ->
                 label.replaceFirstChar {
+
                     if (it.isLowerCase()) {
-                        it.titlecase(Locale.US)
+
+                        it.titlecase(
+                            Locale.US
+                        )
+
                     } else {
+
                         it.toString()
                     }
                 }
         }
     }
 
+    // =========================================================
+    // ARTICLE
+    // =========================================================
+
     private fun articleFor(
         label: String
     ): String {
 
-        return when (label.lowercase(Locale.US).firstOrNull()) {
+        return when (
+            label.lowercase(
+                Locale.US
+            ).firstOrNull()
+        ) {
 
             'a',
             'e',
             'i',
             'o',
-            'u' -> "an "
+            'u' ->
+                "an "
 
-            else -> "a "
+            else ->
+                "a "
         }
     }
+
+    // =========================================================
+    // ZONE PRIORITY
+    // =========================================================
 
     private fun zonePriority(
         obj: ObjectTracker.TrackedObject
@@ -481,14 +722,20 @@ class AnnouncementManager(
                 obj.lastCentroid.x
             )
         ) {
-            Zone.CENTER -> 0
-            Zone.LEFT -> 1
-            Zone.RIGHT -> 2
+
+            Zone.CENTER ->
+                0
+
+            Zone.LEFT ->
+                1
+
+            Zone.RIGHT ->
+                2
         }
     }
 
     // =========================================================
-    // TTS
+    // SPEAK
     // =========================================================
 
     fun speak(
@@ -515,7 +762,10 @@ class AnnouncementManager(
 
     private fun cleanupCooldownMap() {
 
-        if (lastAnnounced.size <= MAX_COOLDOWN_ENTRIES) {
+        if (
+            lastAnnounced.size <=
+            MAX_COOLDOWN_ENTRIES
+        ) {
             return
         }
 
@@ -534,6 +784,7 @@ class AnnouncementManager(
         isSpeaking = false
 
         tts.stop()
+
         tts.shutdown()
 
         lastAnnounced.clear()
@@ -541,14 +792,19 @@ class AnnouncementManager(
 
     companion object {
 
-        const val VERY_CLOSE_THRESHOLD = 0.20f
+        const val VERY_CLOSE_THRESHOLD =
+            0.20f
 
-        const val CLOSE_THRESHOLD = 0.35f
+        const val CLOSE_THRESHOLD =
+            0.35f
 
-        const val NEARBY_THRESHOLD = 0.55f
+        const val NEARBY_THRESHOLD =
+            0.55f
 
-        const val COOLDOWN_MS = 6000L
+        const val COOLDOWN_MS =
+            6000L
 
-        const val MAX_COOLDOWN_ENTRIES = 200
+        const val MAX_COOLDOWN_ENTRIES =
+            200
     }
 }

@@ -15,26 +15,31 @@ import androidx.core.content.ContextCompat
 import java.util.Locale
 
 /**
- * In-app voice command listener for Dhwani.
+ * Continuous voice command listener for Dhwani.
  *
- * Supported command:
+ * Supported commands:
  *
- * "Hey Dhwani, what's in front of me?"
+ * 1. "Hey Dhwani, what's in front of me?"
+ * 2. "Hey Dhwani, read"
+ * 3. "Hey Dhwani, read this"
  *
- * The recognizer continuously restarts after each recognition session.
+ * Speech recognition continuously restarts after each session.
  */
 class VoiceCommandManager(
     private val context: Context,
-    private val onWhatIsInFront: () -> Unit
+    private val onWhatIsInFront: () -> Unit,
+    private val onRead: () -> Unit
 ) {
 
     companion object {
         private const val TAG = "DHWANI_VOICE"
+
         private const val RESTART_DELAY_MS = 700L
         private const val COMMAND_COOLDOWN_MS = 2500L
     }
 
-    private val handler = Handler(Looper.getMainLooper())
+    private val handler =
+        Handler(Looper.getMainLooper())
 
     private var speechRecognizer: SpeechRecognizer? = null
 
@@ -48,10 +53,18 @@ class VoiceCommandManager(
 
     private val restartRunnable = Runnable {
         if (listening) {
-            Log.d(TAG, "Restarting speech recognition...")
+            Log.d(
+                TAG,
+                "Restarting speech recognition..."
+            )
+
             startListeningInternal()
         }
     }
+
+    // =========================================================
+    // START
+    // =========================================================
 
     fun start() {
 
@@ -64,10 +77,11 @@ class VoiceCommandManager(
             return
         }
 
-        val permission = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.RECORD_AUDIO
-        )
+        val permission =
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            )
 
         if (permission != PackageManager.PERMISSION_GRANTED) {
 
@@ -79,13 +93,16 @@ class VoiceCommandManager(
             return
         }
 
-        Log.d(TAG, "RECORD_AUDIO permission = GRANTED")
+        Log.d(
+            TAG,
+            "RECORD_AUDIO permission = GRANTED"
+        )
 
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
 
             Log.e(
                 TAG,
-                "Speech recognition is NOT available on this device."
+                "Speech recognition is NOT available."
             )
 
             return
@@ -103,9 +120,16 @@ class VoiceCommandManager(
         startListeningInternal()
     }
 
+    // =========================================================
+    // CREATE RECOGNIZER
+    // =========================================================
+
     private fun createRecognizer() {
 
-        Log.d(TAG, "Creating SpeechRecognizer...")
+        Log.d(
+            TAG,
+            "Creating SpeechRecognizer..."
+        )
 
         speechRecognizer?.destroy()
 
@@ -129,7 +153,7 @@ class VoiceCommandManager(
 
                     Log.d(
                         TAG,
-                        "BEGINNING OF SPEECH - user is speaking"
+                        "BEGINNING OF SPEECH"
                     )
                 }
 
@@ -137,13 +161,8 @@ class VoiceCommandManager(
                     rmsdB: Float
                 ) {
 
-                    /*
-                     * Useful diagnostic.
-                     *
-                     * If this keeps changing while you speak,
-                     * Android is receiving microphone audio.
-                     */
                     if (rmsdB > -5f) {
+
                         Log.d(
                             TAG,
                             "MIC RMS = $rmsdB"
@@ -154,11 +173,6 @@ class VoiceCommandManager(
                 override fun onBufferReceived(
                     buffer: ByteArray?
                 ) {
-
-                    Log.d(
-                        TAG,
-                        "Audio buffer received"
-                    )
                 }
 
                 override fun onEndOfSpeech() {
@@ -181,6 +195,10 @@ class VoiceCommandManager(
                     scheduleRestart()
                 }
 
+                // =====================================================
+                // FINAL RESULTS
+                // =====================================================
+
                 override fun onResults(
                     results: Bundle?
                 ) {
@@ -202,21 +220,40 @@ class VoiceCommandManager(
                             "Recognized text: [$text]"
                         )
 
-                        if (isWhatIsInFrontCommand(text)) {
+                        when {
 
-                            Log.d(
-                                TAG,
-                                "COMMAND MATCHED: WHAT IS IN FRONT"
-                            )
+                            isReadCommand(text) -> {
 
-                            triggerWhatIsInFront()
+                                Log.d(
+                                    TAG,
+                                    "COMMAND MATCHED: READ"
+                                )
 
-                            return@forEach
+                                triggerRead()
+
+                                return@forEach
+                            }
+
+                            isWhatIsInFrontCommand(text) -> {
+
+                                Log.d(
+                                    TAG,
+                                    "COMMAND MATCHED: WHAT IS IN FRONT"
+                                )
+
+                                triggerWhatIsInFront()
+
+                                return@forEach
+                            }
                         }
                     }
 
                     scheduleRestart()
                 }
+
+                // =====================================================
+                // PARTIAL RESULTS
+                // =====================================================
 
                 override fun onPartialResults(
                     partialResults: Bundle?
@@ -236,16 +273,31 @@ class VoiceCommandManager(
 
                         matches.forEach { text ->
 
-                            if (isWhatIsInFrontCommand(text)) {
+                            when {
 
-                                Log.d(
-                                    TAG,
-                                    "PARTIAL COMMAND MATCHED"
-                                )
+                                isReadCommand(text) -> {
 
-                                triggerWhatIsInFront()
+                                    Log.d(
+                                        TAG,
+                                        "PARTIAL COMMAND MATCHED: READ"
+                                    )
 
-                                return@forEach
+                                    triggerRead()
+
+                                    return@forEach
+                                }
+
+                                isWhatIsInFrontCommand(text) -> {
+
+                                    Log.d(
+                                        TAG,
+                                        "PARTIAL COMMAND MATCHED: WHAT IS IN FRONT"
+                                    )
+
+                                    triggerWhatIsInFront()
+
+                                    return@forEach
+                                }
                             }
                         }
                     }
@@ -255,17 +307,19 @@ class VoiceCommandManager(
                     eventType: Int,
                     params: Bundle?
                 ) {
-
-                    Log.d(
-                        TAG,
-                        "Speech event = $eventType"
-                    )
                 }
             }
         )
 
-        Log.d(TAG, "SpeechRecognizer created")
+        Log.d(
+            TAG,
+            "SpeechRecognizer created"
+        )
     }
+
+    // =========================================================
+    // START LISTENING
+    // =========================================================
 
     private fun startListeningInternal() {
 
@@ -275,24 +329,20 @@ class VoiceCommandManager(
 
         if (speechRecognizer == null) {
 
-            Log.d(
-                TAG,
-                "Recognizer was null. Creating again."
-            )
-
             createRecognizer()
         }
 
-        val permission = ContextCompat.checkSelfPermission(
-            context,
-            Manifest.permission.RECORD_AUDIO
-        )
+        val permission =
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            )
 
         if (permission != PackageManager.PERMISSION_GRANTED) {
 
             Log.e(
                 TAG,
-                "Cannot start recognition: RECORD_AUDIO permission missing"
+                "RECORD_AUDIO permission missing"
             )
 
             return
@@ -330,12 +380,7 @@ class VoiceCommandManager(
                         5
                     )
 
-                    /*
-                     * Do NOT force offline recognition.
-                     *
-                     * The phone may have better online speech
-                     * recognition available.
-                     */
+                    // Online recognition is allowed.
                     putExtra(
                         RecognizerIntent.EXTRA_PREFER_OFFLINE,
                         false
@@ -358,7 +403,7 @@ class VoiceCommandManager(
 
             Log.e(
                 TAG,
-                "SECURITY EXCEPTION while starting microphone",
+                "SECURITY EXCEPTION",
                 e
             )
 
@@ -376,106 +421,164 @@ class VoiceCommandManager(
         }
     }
 
+    // =========================================================
+    // NORMALIZE TEXT
+    // =========================================================
+
+    private fun normalize(
+        text: String
+    ): String {
+
+        return text
+            .lowercase(Locale.US)
+            .replace(
+                Regex("[^a-z0-9 ]"),
+                " "
+            )
+            .replace(
+                Regex("\\s+"),
+                " "
+            )
+            .trim()
+    }
+
+    // =========================================================
+    // WAKE WORD
+    // =========================================================
+
+    private fun hasWakeWord(
+        normalized: String
+    ): Boolean {
+
+        return normalized.contains("hey dhwani") ||
+                normalized.contains("hey dhvani") ||
+                normalized.contains("hey dhvni") ||
+                normalized.contains("hi dhwani") ||
+                normalized.contains("hi dhvani") ||
+                normalized.contains("hi dhvni") ||
+                normalized.contains("hey dhoni") ||
+                normalized.contains("hi dhoni") ||
+                normalized.contains("dhwani") ||
+                normalized.contains("dhvani") ||
+                normalized.contains("dhvni") ||
+                normalized.contains("dhoni")
+    }
+
+    // =========================================================
+    // WHAT IS IN FRONT
+    // =========================================================
+
     private fun isWhatIsInFrontCommand(
         text: String
     ): Boolean {
 
-        val normalized = text
-            .lowercase(Locale.US)
-            .replace(Regex("[^a-z0-9 ]"), " ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-
-        Log.d(TAG, "Normalized command: [$normalized]")
-
-        /*
-         * Speech recognition often mishears:
-         *
-         * "Hey Dhwani"
-         *      -> "hi dhoni"
-         *      -> "hi dhvni"
-         *      -> "hey dhwani"
-         *      -> "hey dhvani"
-         *      -> "hey dhvni"
-         *
-         * So we don't require an exact wake phrase.
-         */
-
-        val wakeWordDetected =
-            normalized.contains("hey dhwani") ||
-                    normalized.contains("hey dhvani") ||
-                    normalized.contains("hey dhvni") ||
-                    normalized.contains("hi dhwani") ||
-                    normalized.contains("hi dhvani") ||
-                    normalized.contains("hi dhvni") ||
-                    normalized.contains("hey dhoni") ||
-                    normalized.contains("hi dhoni") ||
-                    normalized.contains("dhwani") ||
-                    normalized.contains("dhvani") ||
-                    normalized.contains("dhvni") ||
-                    normalized.contains("dhoni")
-
-        if (!wakeWordDetected) {
-            return false
-        }
-
-        /*
-         * The important part of the command.
-         *
-         * Accept variations such as:
-         *
-         * "what's in front of me"
-         * "whats in front of me"
-         * "what is in front of me"
-         * "what's in front"
-         * "in front of me"
-         * "front of me"
-         */
-
-        val asksWhatIsInFront =
-            normalized.contains("what s in front of me") ||
-                    normalized.contains("whats in front of me") ||
-                    normalized.contains("what is in front of me") ||
-                    normalized.contains("what in front of me") ||
-                    normalized.contains("whats in front") ||
-                    normalized.contains("what is in front") ||
-                    normalized.contains("in front of me") ||
-                    normalized.contains("front of me")
+        val normalized =
+            normalize(text)
 
         Log.d(
             TAG,
-            "Wake word detected=$wakeWordDetected, front question=$asksWhatIsInFront"
+            "Checking front command: [$normalized]"
+        )
+
+        if (!hasWakeWord(normalized)) {
+            return false
+        }
+
+        val asksWhatIsInFront =
+            normalized.contains(
+                "what s in front of me"
+            ) ||
+                    normalized.contains(
+                        "whats in front of me"
+                    ) ||
+                    normalized.contains(
+                        "what is in front of me"
+                    ) ||
+                    normalized.contains(
+                        "what in front of me"
+                    ) ||
+                    normalized.contains(
+                        "whats in front"
+                    ) ||
+                    normalized.contains(
+                        "what is in front"
+                    ) ||
+                    normalized.contains(
+                        "in front of me"
+                    ) ||
+                    normalized.contains(
+                        "front of me"
+                    )
+
+        Log.d(
+            TAG,
+            "Front command = $asksWhatIsInFront"
         )
 
         return asksWhatIsInFront
     }
 
-    private fun triggerWhatIsInFront() {
+    // =========================================================
+    // READ COMMAND
+    // =========================================================
 
-        val now = System.currentTimeMillis()
+    private fun isReadCommand(
+        text: String
+    ): Boolean {
 
-        if (now - lastCommandTime < COMMAND_COOLDOWN_MS) {
+        val normalized =
+            normalize(text)
 
-            Log.d(
-                TAG,
-                "Ignoring duplicate command because of cooldown"
-            )
+        Log.d(
+            TAG,
+            "Checking read command: [$normalized]"
+        )
 
-            return
+        if (!hasWakeWord(normalized)) {
+            return false
         }
 
-        if (commandTriggered) {
+        /*
+         * Accept:
+         *
+         * "Hey Dhwani read"
+         * "Hey Dhwani read this"
+         * "Hey Dhwani please read"
+         * "Dhwani read"
+         * "Hi Dhwani read this"
+         *
+         * Also tolerate speech-recognition variations.
+         */
 
-            Log.d(
-                TAG,
-                "Command already triggered"
-            )
+        val asksToRead =
+            normalized == "read" ||
+                    normalized.endsWith(" read") ||
+                    normalized.contains(" read ") ||
+                    normalized.endsWith(" read this") ||
+                    normalized.contains(" read this") ||
+                    normalized.contains("please read") ||
+                    normalized.contains("read it") ||
+                    normalized.contains("read this")
 
+        Log.d(
+            TAG,
+            "Read command = $asksToRead"
+        )
+
+        return asksToRead
+    }
+
+    // =========================================================
+    // TRIGGER WHAT IS IN FRONT
+    // =========================================================
+
+    private fun triggerWhatIsInFront() {
+
+        if (!canTriggerCommand()) {
             return
         }
 
         commandTriggered = true
-        lastCommandTime = now
 
         Log.d(
             TAG,
@@ -487,25 +590,80 @@ class VoiceCommandManager(
             "WHAT IS IN FRONT COMMAND TRIGGERED"
         )
 
-        Log.d(
-            TAG,
-            "Calling pipeline callback..."
-        )
-
-        try {
-
-            speechRecognizer?.stopListening()
-
-        } catch (e: Exception) {
-
-            Log.e(
-                TAG,
-                "Error stopping recognizer",
-                e
-            )
-        }
+        stopCurrentRecognition()
 
         onWhatIsInFront()
+
+        finishCommandCooldown()
+    }
+
+    // =========================================================
+    // TRIGGER READ
+    // =========================================================
+
+    private fun triggerRead() {
+
+        if (!canTriggerCommand()) {
+            return
+        }
+
+        commandTriggered = true
+
+        Log.d(
+            TAG,
+            "================================"
+        )
+
+        Log.d(
+            TAG,
+            "READ COMMAND TRIGGERED"
+        )
+
+        stopCurrentRecognition()
+
+        onRead()
+
+        finishCommandCooldown()
+    }
+
+    // =========================================================
+    // COMMAND COOLDOWN
+    // =========================================================
+
+    private fun canTriggerCommand(): Boolean {
+
+        val now =
+            System.currentTimeMillis()
+
+        if (
+            now - lastCommandTime <
+            COMMAND_COOLDOWN_MS
+        ) {
+
+            Log.d(
+                TAG,
+                "Ignoring duplicate command because of cooldown"
+            )
+
+            return false
+        }
+
+        if (commandTriggered) {
+
+            Log.d(
+                TAG,
+                "Command already triggered"
+            )
+
+            return false
+        }
+
+        lastCommandTime = now
+
+        return true
+    }
+
+    private fun finishCommandCooldown() {
 
         handler.postDelayed(
             {
@@ -527,6 +685,30 @@ class VoiceCommandManager(
         )
     }
 
+    // =========================================================
+    // STOP CURRENT RECOGNITION
+    // =========================================================
+
+    private fun stopCurrentRecognition() {
+
+        try {
+
+            speechRecognizer?.stopListening()
+
+        } catch (e: Exception) {
+
+            Log.e(
+                TAG,
+                "Error stopping recognizer",
+                e
+            )
+        }
+    }
+
+    // =========================================================
+    // RESTART
+    // =========================================================
+
     private fun scheduleRestart() {
 
         if (!listening) {
@@ -542,6 +724,10 @@ class VoiceCommandManager(
             RESTART_DELAY_MS
         )
     }
+
+    // =========================================================
+    // ERROR STRING
+    // =========================================================
 
     private fun errorToString(
         error: Int
@@ -581,6 +767,10 @@ class VoiceCommandManager(
         }
     }
 
+    // =========================================================
+    // STOP
+    // =========================================================
+
     fun stop() {
 
         Log.d(
@@ -590,21 +780,19 @@ class VoiceCommandManager(
 
         listening = false
 
+        commandTriggered = false
+
         handler.removeCallbacks(
             restartRunnable
         )
 
         try {
-
             speechRecognizer?.stopListening()
-
         } catch (_: Exception) {
         }
 
         try {
-
             speechRecognizer?.cancel()
-
         } catch (_: Exception) {
         }
 
