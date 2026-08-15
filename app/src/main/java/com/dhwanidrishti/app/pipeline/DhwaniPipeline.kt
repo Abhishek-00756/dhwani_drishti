@@ -10,160 +10,379 @@ import com.dhwanidrishti.app.processing.ZoneProcessor
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicReference
 
-/**
- * Producer-consumer split:
- *  - Camera thread overwrites [latestFrame] (STRATEGY_KEEP_ONLY_LATEST, so
- *    stale frames are never queued).
- *  - Inference thread takes the newest frame, runs depth -> zones -> audio.
- *  - Audio thread reads whatever the inference thread last wrote, lock-free.
- *
- * Modes:
- *  - SOUNDSCAPE (default): continuous tone from zone closeness.
- *  - NARRATED: continuous tone muted; Mode B speaks object announcements.
- *  - HYBRID: both run together.
- *
- * Mode B is created lazily on first use so Mode A-only sessions don't pay the
- * cost of loading the second model (or fail if yolov8n_fp16.tflite is missing).
- */
 class DhwaniPipeline(
     private val context: Context,
     private val onStats: (PipelineStats) -> Unit = {},
     private val onCalibrationSample: (CalibrationPoint) -> Unit = {},
 ) {
 
-    private val depthEstimator = DepthEstimator(context)
+    private val depthEstimator =
+        DepthEstimator(context)
 
-    /** Public so the UI can show calibration status and drive the flow. */
-    val calibration = CalibrationManager(context)
-    private val sonification = SonificationEngine()
+    val calibration =
+        CalibrationManager(context)
 
-    private val latestFrame = AtomicReference<Bitmap?>(null)
-    private val inferenceExecutor = Executors.newSingleThreadExecutor()
+    private val sonification =
+        SonificationEngine()
 
-    private var smoothed = ZoneDistances(0.5f, 0.5f, 0.5f)
-    private val stats = PipelineStats()
+    private val latestFrame =
+        AtomicReference<Bitmap?>(null)
 
-    @Volatile private var running = true
-    @Volatile private var pendingCalibrationPoint: CalibrationPoint? = null
+    private val inferenceExecutor =
+        Executors.newSingleThreadExecutor()
 
-    /** Switched from the UI thread; read every frame by the inference thread. */
-    @Volatile var mode: AppMode = AppMode.SOUNDSCAPE
+    private var smoothed =
+        ZoneDistances(
+            0.5f,
+            0.5f,
+            0.5f
+        )
 
-    private var modeB: ModeBEngine? = null
+    private val stats =
+        PipelineStats()
+
+    @Volatile
+    private var running = true
+
+    @Volatile
+    private var pendingCalibrationPoint:
+            CalibrationPoint? = null
+
+    @Volatile
+    var mode: AppMode =
+        AppMode.SOUNDSCAPE
+
+    private var modeB:
+            ModeBEngine? = null
+
+    // =========================================================
+    // INITIALIZATION
+    // =========================================================
 
     init {
+
         sonification.start()
-        inferenceExecutor.execute { inferenceLoop() }
+
+        inferenceExecutor.execute {
+            inferenceLoop()
+        }
     }
 
-    /** Camera thread. */
-    fun submitFrame(bitmap: Bitmap) {
-        latestFrame.set(bitmap)
+    // =========================================================
+    // CAMERA
+    // =========================================================
+
+    fun submitFrame(
+        bitmap: Bitmap
+    ) {
+
+        latestFrame.set(
+            bitmap
+        )
     }
 
-    /**
-     * Requests the next processed frame to capture the raw model output as the
-     * "near" calibration sample (Step 9). Cheap: computes one max over the depth
-     * map, so it only happens on demand, not every frame.
-     */
+    // =========================================================
+    // CALIBRATION
+    // =========================================================
+
     fun recordCalibrationNear() {
-        pendingCalibrationPoint = CalibrationPoint.NEAR
+
+        pendingCalibrationPoint =
+            CalibrationPoint.NEAR
     }
 
     fun recordCalibrationFar() {
-        pendingCalibrationPoint = CalibrationPoint.FAR
+
+        pendingCalibrationPoint =
+            CalibrationPoint.FAR
     }
+
+    // =========================================================
+    // VOICE QUESTION
+    // =========================================================
+
+    /**
+     * Answers:
+     *
+     * "Hey Dhwani, what's in front of me?"
+     */
+    fun answerWhatIsInFront() {
+
+        /*
+         * If Mode B hasn't been initialized yet, initialize it.
+         *
+         * This also means the voice command works even if the
+         * user has not manually switched to Narrated mode.
+         */
+        modeBEngine()
+            .answerWhatIsInFront()
+    }
+
+    // =========================================================
+    // INFERENCE LOOP
+    // =========================================================
 
     private fun inferenceLoop() {
+
         while (running) {
-            val frame = latestFrame.getAndSet(null) ?: continue
 
-            val tStart = System.nanoTime()
-            val rawDepth = depthEstimator.runInference(frame)
-            val tModel = System.nanoTime()
+            val frame =
+                latestFrame.getAndSet(null)
+                    ?: continue
 
-            // One-shot raw capture for the calibration flow (Step 9).
+            val tStart =
+                System.nanoTime()
+
+            // -------------------------------------------------
+            // MiDaS
+            // -------------------------------------------------
+
+            val rawDepth =
+                depthEstimator.runInference(
+                    frame
+                )
+
+            val tModel =
+                System.nanoTime()
+
+            // -------------------------------------------------
+            // CALIBRATION
+            // -------------------------------------------------
+
             pendingCalibrationPoint?.let { point ->
-                val raw = maxRawValue(rawDepth)
+
+                val raw =
+                    maxRawValue(
+                        rawDepth
+                    )
+
                 when (point) {
-                    CalibrationPoint.NEAR -> calibration.recordNear(raw)
-                    CalibrationPoint.FAR -> calibration.recordFar(raw)
+
+                    CalibrationPoint.NEAR ->
+                        calibration.recordNear(
+                            raw
+                        )
+
+                    CalibrationPoint.FAR ->
+                        calibration.recordFar(
+                            raw
+                        )
                 }
-                pendingCalibrationPoint = null
-                onCalibrationSample(point)
+
+                pendingCalibrationPoint =
+                    null
+
+                onCalibrationSample(
+                    point
+                )
             }
 
-            val closeness = calibration.normalize(rawDepth)
+            // -------------------------------------------------
+            // NORMALIZE DEPTH
+            // -------------------------------------------------
+
+            val closeness =
+                calibration.normalize(
+                    rawDepth
+                )
+
+            // -------------------------------------------------
+            // MODE A / HYBRID
+            // -------------------------------------------------
 
             if (mode == AppMode.NARRATED) {
-                // Mode B only: keep the depth map flowing, silence the tone.
-                sonification.muted = true
+
+                sonification.muted =
+                    true
+
             } else {
-                sonification.muted = false
-                // Hybrid ducking: lower the tone to 20% while Mode B speaks,
-                // restore it afterwards (Stage 4).
-                sonification.setDucking(modeB?.isSpeaking == true)
-                val zones = ZoneProcessor.processZones(closeness)
-                // EMA across frames prevents audio jitter from frame-to-frame noise.
-                smoothed = ZoneDistances(
-                    left = 0.6f * smoothed.left + 0.4f * zones.left,
-                    center = 0.6f * smoothed.center + 0.4f * zones.center,
-                    right = 0.6f * smoothed.right + 0.4f * zones.right,
+
+                sonification.muted =
+                    false
+
+                sonification.setDucking(
+                    modeB?.isSpeaking == true
                 )
-                sonification.updateFromZones(smoothed)
+
+                val zones =
+                    ZoneProcessor.processZones(
+                        closeness
+                    )
+
+                smoothed =
+                    ZoneDistances(
+
+                        left =
+                            0.6f * smoothed.left +
+                                    0.4f * zones.left,
+
+                        center =
+                            0.6f * smoothed.center +
+                                    0.4f * zones.center,
+
+                        right =
+                            0.6f * smoothed.right +
+                                    0.4f * zones.right
+                    )
+
+                sonification.updateFromZones(
+                    smoothed
+                )
             }
 
-            if (mode == AppMode.NARRATED || mode == AppMode.HYBRID) {
-                modeBEngine().process(closeness, frame)
+            // -------------------------------------------------
+            // MODE B
+            // -------------------------------------------------
+
+            if (
+                mode == AppMode.NARRATED ||
+                mode == AppMode.HYBRID
+            ) {
+
+                modeBEngine()
+                    .process(
+                        closeness,
+                        frame
+                    )
             }
 
-            val tEnd = System.nanoTime()
+            val tEnd =
+                System.nanoTime()
 
-            // Per-stage timing (Step 8): model inference vs zone/audio update.
-            stats.inferenceMs = (tModel - tStart) / 1_000_000f
-            stats.processMs = (tEnd - tModel) / 1_000_000f
-            stats.totalMs = (tEnd - tStart) / 1_000_000f
-            stats.objectsTracked = modeB?.trackedCount ?: 0
+            // -------------------------------------------------
+            // STATS
+            // -------------------------------------------------
+
+            stats.inferenceMs =
+                (
+                        tModel - tStart
+                        ) / 1_000_000f
+
+            stats.processMs =
+                (
+                        tEnd - tModel
+                        ) / 1_000_000f
+
+            stats.totalMs =
+                (
+                        tEnd - tStart
+                        ) / 1_000_000f
+
+            stats.objectsTracked =
+                modeB?.trackedCount ?: 0
+
             stats.frames++
-            onStats(stats)
+
+            onStats(
+                stats
+            )
         }
     }
 
-    /** Lazy: creating ModeBEngine loads yolov8n_fp16.tflite + TTS. */
-    private fun modeBEngine(): ModeBEngine =
-        modeB ?: ModeBEngine(context).also { modeB = it }
+    // =========================================================
+    // MODE B LAZY INITIALIZATION
+    // =========================================================
 
-    /** MiDaS inverse depth: larger value = closer, so max = nearest pixel. */
-    private fun maxRawValue(depth: Array<FloatArray>): Float {
-        var max = -Float.MAX_VALUE
+    private fun modeBEngine():
+            ModeBEngine {
+
+        return modeB
+            ?: ModeBEngine(
+                context
+            ).also {
+                modeB = it
+            }
+    }
+
+    // =========================================================
+    // DEPTH
+    // =========================================================
+
+    private fun maxRawValue(
+        depth: Array<FloatArray>
+    ): Float {
+
+        var max =
+            -Float.MAX_VALUE
+
         for (row in depth) {
-            for (v in row) {
-                if (v.isFinite() && v > max) max = v
+
+            for (value in row) {
+
+                if (
+                    value.isFinite() &&
+                    value > max
+                ) {
+                    max = value
+                }
             }
         }
+
         return max
     }
 
+    // =========================================================
+    // STOP
+    // =========================================================
+
     fun stop() {
+
         running = false
+
         inferenceExecutor.shutdown()
+
         sonification.stop()
+
         depthEstimator.close()
+
         modeB?.shutdown()
+
         modeB = null
     }
 }
 
-/** Which output mode the pipeline is in. */
-enum class AppMode { SOUNDSCAPE, NARRATED, HYBRID }
+// =============================================================
+// APP MODE
+// =============================================================
 
-/** Rolling performance counters, read from the UI thread via [onStats]. */
-class PipelineStats {
-    @Volatile var inferenceMs: Float = 0f
-    @Volatile var processMs: Float = 0f
-    @Volatile var totalMs: Float = 0f
-    @Volatile var frames: Long = 0L
-    @Volatile var objectsTracked: Int = 0
+enum class AppMode {
+
+    SOUNDSCAPE,
+
+    NARRATED,
+
+    HYBRID
 }
 
-enum class CalibrationPoint { NEAR, FAR }
+// =============================================================
+// PIPELINE STATS
+// =============================================================
+
+class PipelineStats {
+
+    @Volatile
+    var inferenceMs: Float = 0f
+
+    @Volatile
+    var processMs: Float = 0f
+
+    @Volatile
+    var totalMs: Float = 0f
+
+    @Volatile
+    var frames: Long = 0L
+
+    @Volatile
+    var objectsTracked: Int = 0
+}
+
+// =============================================================
+// CALIBRATION
+// =============================================================
+
+enum class CalibrationPoint {
+
+    NEAR,
+
+    FAR
+}

@@ -12,26 +12,19 @@ import com.dhwanidrishti.app.processing.fuseDetectionsWithDepth
 /**
  * Mode B - Object-aware narrated assistance.
  *
- * Pipeline:
- *
- * Camera frame
- *      ↓
- * YOLO object detection
- *      ↓
- * MiDaS depth fusion
- *      ↓
+ * Camera
+ *    ↓
+ * YOLO
+ *    ↓
+ * MiDaS depth
+ *    ↓
+ * Depth fusion
+ *    ↓
  * Object tracking
- *      ↓
+ *    ↓
  * Risk evaluation
- *      ↓
- * Voice announcement
- *
- * Example announcements:
- *
- * "Laptop, very close"
- * "Person, very close"
- * "Backpack to your left, nearby"
- * "Person is approaching from your right"
+ *    ↓
+ * Voice
  */
 class ModeBEngine(
     context: Context,
@@ -39,39 +32,41 @@ class ModeBEngine(
 ) {
 
     // ---------------------------------------------------------
-    // Object detector
+    // MODELS
     // ---------------------------------------------------------
 
-    private val detector = ObjectDetector(context)
+    private val detector =
+        ObjectDetector(context)
+
+    private val tracker =
+        ObjectTracker()
+
+    private val riskEngine =
+        RiskEngine()
+
+    private val announcements =
+        AnnouncementManager(context)
 
     // ---------------------------------------------------------
-    // Object tracker
-    // ---------------------------------------------------------
-
-    private val tracker = ObjectTracker()
-
-    // ---------------------------------------------------------
-    // Risk engine
-    // ---------------------------------------------------------
-
-    private val riskEngine = RiskEngine()
-
-    // ---------------------------------------------------------
-    // Voice announcement manager
-    // ---------------------------------------------------------
-
-    private val announcements = AnnouncementManager(context)
-
-    // ---------------------------------------------------------
-    // Detection throttling
+    // STATE
     // ---------------------------------------------------------
 
     @Volatile
     private var lastDetectionMs: Long = 0L
 
-    // ---------------------------------------------------------
-    // Debug / UI information
-    // ---------------------------------------------------------
+    /**
+     * Latest tracked scene.
+     *
+     * VoiceCommandManager can ask:
+     *
+     * "What's in front of me?"
+     *
+     * and this list gives the answer.
+     */
+    @Volatile
+    private var latestTrackedObjects:
+            List<ObjectTracker.TrackedObject> =
+        emptyList()
 
     @Volatile
     var trackedCount: Int = 0
@@ -82,49 +77,54 @@ class ModeBEngine(
         private set
 
     // ---------------------------------------------------------
-    // Used by Hybrid mode
+    // HYBRID MODE
     // ---------------------------------------------------------
 
     val isSpeaking: Boolean
         get() = announcements.isSpeaking
 
-    /**
-     * Process one camera frame.
-     *
-     * closeness:
-     *      1.0 = closest
-     *      0.0 = farthest
-     */
+    // =========================================================
+    // PROCESS FRAME
+    // =========================================================
+
     fun process(
         closeness: Array<FloatArray>,
         frame: Bitmap
     ) {
 
-        val now = System.currentTimeMillis()
+        val now =
+            System.currentTimeMillis()
 
         // -----------------------------------------------------
         // Detection throttling
         // -----------------------------------------------------
-        //
-        // MiDaS/depth can run frequently.
-        // YOLO does not need to run on every frame.
-        //
 
-        if (now - lastDetectionMs < minDetectionIntervalMs) {
+        if (
+            now - lastDetectionMs <
+            minDetectionIntervalMs
+        ) {
             return
         }
 
         lastDetectionMs = now
 
         // -----------------------------------------------------
-        // 1. OBJECT DETECTION
+        // 1. YOLO DETECTION
         // -----------------------------------------------------
 
-        val rawDetections = detector.detect(frame)
+        val rawDetections =
+            detector.detect(frame)
 
         if (rawDetections.isEmpty()) {
 
-            trackedCount = 0
+            /*
+             * Do not immediately destroy the last scene.
+             *
+             * Keeping the last tracked objects for a short time
+             * makes voice commands more reliable when YOLO misses
+             * one frame.
+             */
+
             highestRisk = null
 
             return
@@ -133,78 +133,64 @@ class ModeBEngine(
         // -----------------------------------------------------
         // 2. DEPTH FUSION
         // -----------------------------------------------------
-        //
-        // Converts:
-        //
-        // YOLO box
-        //      +
-        // MiDaS closeness
-        //
-        // into:
-        //
-        // DetectedObject
-        //
-        // containing:
-        // label
-        // boundingBox
-        // confidence
-        // distance
-        // zone
-        //
 
-        val detectedObjects = fuseDetectionsWithDepth(
-            detections = rawDetections,
-            depthMap = closeness
-        )
+        val detectedObjects =
+            fuseDetectionsWithDepth(
+                detections = rawDetections,
+                depthMap = closeness
+            )
 
         if (detectedObjects.isEmpty()) {
-
-            trackedCount = 0
-            highestRisk = null
-
             return
         }
 
         // -----------------------------------------------------
-        // 3. OBJECT TRACKING
+        // 3. TRACKING
         // -----------------------------------------------------
 
-        val trackedObjects = tracker.update(detectedObjects)
+        val trackedObjects =
+            tracker.update(
+                detectedObjects
+            )
 
-        trackedCount = trackedObjects.size
+        latestTrackedObjects =
+            trackedObjects.toList()
+
+        trackedCount =
+            trackedObjects.size
 
         // -----------------------------------------------------
-        // 4. RISK EVALUATION
+        // 4. RISK
         // -----------------------------------------------------
 
-        var mostDangerousRisk: RiskResult? = null
+        var mostDangerousRisk:
+                RiskResult? = null
 
-        for (detectedObject in detectedObjects) {
+        for (
+        detectedObject
+        in detectedObjects
+        ) {
 
-            val risk = riskEngine.evaluate(detectedObject)
+            val risk =
+                riskEngine.evaluate(
+                    detectedObject
+                )
 
             if (
                 mostDangerousRisk == null ||
-                risk.score > mostDangerousRisk!!.score
+                risk.score >
+                mostDangerousRisk!!.score
             ) {
                 mostDangerousRisk = risk
             }
         }
 
-        highestRisk = mostDangerousRisk
+        highestRisk =
+            mostDangerousRisk
 
         // -----------------------------------------------------
-        // 5. VOICE ANNOUNCEMENT
+        // 5. AUTOMATIC ANNOUNCEMENT
         // -----------------------------------------------------
-        //
-        // AnnouncementManager decides:
-        //
-        // - Is the object close enough?
-        // - Is it approaching?
-        // - Has it already been announced recently?
-        // - Which object should be announced first?
-        // - Which side is it on?
-        //
 
         announcements.evaluate(
             tracked = trackedObjects,
@@ -212,13 +198,29 @@ class ModeBEngine(
         )
     }
 
-    // ---------------------------------------------------------
-    // Shutdown
-    // ---------------------------------------------------------
+    // =========================================================
+    // VOICE QUESTION
+    // =========================================================
 
     /**
-     * Releases Mode B resources.
+     * Called by VoiceCommandManager when the user says:
+     *
+     * "Hey Dhwani, what's in front of me?"
      */
+    fun answerWhatIsInFront() {
+
+        val scene =
+            latestTrackedObjects
+
+        announcements.announceWhatIsInFront(
+            scene
+        )
+    }
+
+    // =========================================================
+    // CLEANUP
+    // =========================================================
+
     fun shutdown() {
 
         announcements.shutdown()

@@ -12,3 +12,21 @@ __pycache__/
 *.pyc
 
 .venv/
+runs/
+
+# YOLO / ML training outputs
+runs/
+*.pt
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Android
+.gradle/
+build/
+captures/
+.externalNativeBuild/
+.cxx/
