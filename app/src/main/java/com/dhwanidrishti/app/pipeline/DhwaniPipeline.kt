@@ -1,4 +1,5 @@
 package com.dhwanidrishti.app.pipeline
+
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
@@ -11,6 +12,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicReference
 import com.dhwanidrishti.app.audio.TextReader
 import java.util.concurrent.atomic.AtomicBoolean
+
 
 class DhwaniPipeline(
     private val context: Context,
@@ -25,6 +27,7 @@ class DhwaniPipeline(
     private val depthEstimator =
         DepthEstimator(context)
 
+
     // =========================================================
     // CALIBRATION
     // =========================================================
@@ -32,12 +35,14 @@ class DhwaniPipeline(
     val calibration =
         CalibrationManager(context)
 
+
     // =========================================================
     // SOUNDSCAPE
     // =========================================================
 
     private val sonification =
         SonificationEngine()
+
 
     // =========================================================
     // FRAME BUFFER
@@ -52,6 +57,7 @@ class DhwaniPipeline(
     private val latestFrame =
         AtomicReference<Bitmap?>(null)
 
+
     // =========================================================
     // INFERENCE THREAD
     // =========================================================
@@ -59,11 +65,17 @@ class DhwaniPipeline(
     private val inferenceExecutor =
         Executors.newSingleThreadExecutor()
 
+
+    // =========================================================
+    // OCR
+    // =========================================================
+
     private val textReader =
         TextReader()
 
     private val pendingRead =
         AtomicBoolean(false)
+
 
     // =========================================================
     // SMOOTHED ZONE VALUES
@@ -76,6 +88,7 @@ class DhwaniPipeline(
             0.5f
         )
 
+
     // =========================================================
     // PERFORMANCE STATS
     // =========================================================
@@ -83,12 +96,14 @@ class DhwaniPipeline(
     private val stats =
         PipelineStats()
 
+
     // =========================================================
     // PIPELINE STATE
     // =========================================================
 
     @Volatile
     private var running = true
+
 
     // =========================================================
     // CALIBRATION REQUEST
@@ -98,6 +113,7 @@ class DhwaniPipeline(
     private var pendingCalibrationPoint:
             CalibrationPoint? = null
 
+
     // =========================================================
     // APP MODE
     // =========================================================
@@ -105,6 +121,7 @@ class DhwaniPipeline(
     @Volatile
     var mode: AppMode =
         AppMode.SOUNDSCAPE
+
 
     // =========================================================
     // MODE B
@@ -118,6 +135,7 @@ class DhwaniPipeline(
      */
     private var modeB:
             ModeBEngine? = null
+
 
     // =========================================================
     // INITIALIZATION
@@ -133,6 +151,7 @@ class DhwaniPipeline(
             inferenceLoop()
         }
     }
+
 
     // =========================================================
     // CAMERA
@@ -152,6 +171,7 @@ class DhwaniPipeline(
         )
     }
 
+
     // =========================================================
     // CALIBRATION
     // =========================================================
@@ -166,6 +186,7 @@ class DhwaniPipeline(
             CalibrationPoint.NEAR
     }
 
+
     /**
      * Request the next processed frame to be used
      * as the FAR calibration sample.
@@ -175,6 +196,7 @@ class DhwaniPipeline(
         pendingCalibrationPoint =
             CalibrationPoint.FAR
     }
+
 
     // =========================================================
     // VOICE QUESTION
@@ -196,14 +218,50 @@ class DhwaniPipeline(
             .answerWhatIsInFront()
     }
 
+
     // =========================================================
-    // INFERENCE LOOP
+    // VOICE QUESTION:
+    //
+    // "HEY DHWANI, WHERE IS THE DOOR?"
     // =========================================================
-// =========================================================
-// VOICE QUESTION:
-//
-// "HEY DHWANI, READ"
-// =========================================================
+
+    /**
+     * Answers an object-location question.
+     *
+     * Examples:
+     *
+     * "Where is the door?"
+     * -> "Door is on your left."
+     *
+     * "Where is the person?"
+     * -> "Person is in front of you."
+     *
+     * "Where is the laptop?"
+     * -> "Laptop is on your right."
+     *
+     * Mode B searches the latest tracked scene.
+     */
+    fun answerWhereIs(
+        objectName: String
+    ) {
+
+        Log.d(
+            "DHWANI_PIPELINE",
+            "Location request: [$objectName]"
+        )
+
+        modeBEngine()
+            .answerWhereIs(
+                objectName
+            )
+    }
+
+
+    // =========================================================
+    // VOICE QUESTION:
+    //
+    // "HEY DHWANI, READ"
+    // =========================================================
 
     /**
      * Reads text visible in front of the camera.
@@ -226,6 +284,12 @@ class DhwaniPipeline(
             "OCR scheduled for next camera frame"
         )
     }
+
+
+    // =========================================================
+    // INFERENCE LOOP
+    // =========================================================
+
     private fun inferenceLoop() {
 
         while (running) {
@@ -238,9 +302,10 @@ class DhwaniPipeline(
                 latestFrame.getAndSet(null)
                     ?: continue
 
+
             // =================================================
-// VOICE READ -> OCR
-// =================================================
+            // VOICE READ -> OCR
+            // =================================================
 
             if (pendingRead.compareAndSet(true, false)) {
 
@@ -251,10 +316,12 @@ class DhwaniPipeline(
 
                 val ocrBitmap =
                     try {
+
                         frame.copy(
                             Bitmap.Config.ARGB_8888,
                             false
                         )
+
                     } catch (e: Exception) {
 
                         Log.e(
@@ -292,11 +359,15 @@ class DhwaniPipeline(
                             )
 
                             modeBEngine()
-                                .speak(text)
+                                .speak(
+                                    text
+                                )
                         }
 
                         try {
+
                             ocrBitmap.recycle()
+
                         } catch (_: Exception) {
                         }
                     }
@@ -304,10 +375,13 @@ class DhwaniPipeline(
             }
 
 
-
+            // =================================================
+            // DEPTH
+            // =================================================
 
             val tStart =
                 System.nanoTime()
+
 
             // -------------------------------------------------
             // MiDaS DEPTH
@@ -318,8 +392,10 @@ class DhwaniPipeline(
                     frame
                 )
 
+
             val tModel =
                 System.nanoTime()
+
 
             // -------------------------------------------------
             // CALIBRATION
@@ -353,6 +429,7 @@ class DhwaniPipeline(
                 )
             }
 
+
             // -------------------------------------------------
             // NORMALIZE DEPTH
             // -------------------------------------------------
@@ -367,6 +444,7 @@ class DhwaniPipeline(
                 calibration.normalize(
                     rawDepth
                 )
+
 
             // =================================================
             // MODE A / HYBRID
@@ -384,6 +462,7 @@ class DhwaniPipeline(
                 sonification.muted =
                     false
 
+
                 // -------------------------------------------------
                 // HYBRID DUCKING
                 // -------------------------------------------------
@@ -396,6 +475,7 @@ class DhwaniPipeline(
                     modeB?.isSpeaking == true
                 )
 
+
                 // -------------------------------------------------
                 // ZONE PROCESSING
                 // -------------------------------------------------
@@ -405,14 +485,11 @@ class DhwaniPipeline(
                         closeness
                     )
 
+
                 // -------------------------------------------------
                 // EMA SMOOTHING
                 // -------------------------------------------------
 
-                /**
-                 * Prevents sound from jumping around
-                 * because of small depth fluctuations.
-                 */
                 smoothed =
                     ZoneDistances(
 
@@ -429,6 +506,7 @@ class DhwaniPipeline(
                                     0.4f * zones.right
                     )
 
+
                 // -------------------------------------------------
                 // UPDATE AUDIO
                 // -------------------------------------------------
@@ -437,6 +515,7 @@ class DhwaniPipeline(
                     smoothed
                 )
             }
+
 
             // =================================================
             // MODE B
@@ -454,12 +533,14 @@ class DhwaniPipeline(
                     )
             }
 
+
             // =================================================
             // TIMING
             // =================================================
 
             val tEnd =
                 System.nanoTime()
+
 
             // -------------------------------------------------
             // MODEL TIME
@@ -470,6 +551,7 @@ class DhwaniPipeline(
                         tModel - tStart
                         ) / 1_000_000f
 
+
             // -------------------------------------------------
             // PROCESSING TIME
             // -------------------------------------------------
@@ -478,6 +560,7 @@ class DhwaniPipeline(
                 (
                         tEnd - tModel
                         ) / 1_000_000f
+
 
             // -------------------------------------------------
             // TOTAL TIME
@@ -488,6 +571,7 @@ class DhwaniPipeline(
                         tEnd - tStart
                         ) / 1_000_000f
 
+
             // -------------------------------------------------
             // TRACKED OBJECTS
             // -------------------------------------------------
@@ -495,11 +579,13 @@ class DhwaniPipeline(
             stats.objectsTracked =
                 modeB?.trackedCount ?: 0
 
+
             // -------------------------------------------------
             // FRAME COUNTER
             // -------------------------------------------------
 
             stats.frames++
+
 
             // -------------------------------------------------
             // SEND STATS TO UI
@@ -510,6 +596,7 @@ class DhwaniPipeline(
             )
         }
     }
+
 
     // =========================================================
     // MODE B LAZY INITIALIZATION
@@ -537,6 +624,7 @@ class DhwaniPipeline(
                 modeB = it
             }
     }
+
 
     // =========================================================
     // DEPTH UTILITIES
@@ -574,6 +662,7 @@ class DhwaniPipeline(
         return max
     }
 
+
     // =========================================================
     // STOP
     // =========================================================
@@ -601,6 +690,7 @@ class DhwaniPipeline(
     }
 }
 
+
 // =============================================================
 // APP MODE
 // =============================================================
@@ -623,6 +713,7 @@ enum class AppMode {
     HYBRID
 }
 
+
 // =============================================================
 // PIPELINE STATS
 // =============================================================
@@ -644,6 +735,7 @@ class PipelineStats {
     @Volatile
     var objectsTracked: Int = 0
 }
+
 
 // =============================================================
 // CALIBRATION POINT

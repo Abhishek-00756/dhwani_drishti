@@ -26,12 +26,36 @@ import java.util.Locale
  * "Hey Dhwani, read this"
  * "Hey Dhwani, read it"
  *
+ * Object-location commands:
+ *
+ * "Hey Dhwani, where is the door?"
+ * "Hey Dhwani, where's the door?"
+ * "Hey Dhwani, find the door"
+ * "Hey Dhwani, locate the door"
+ *
+ * "Hey Dhwani, where is the pothole?"
+ * "Hey Dhwani, where are the stairs?"
+ * "Hey Dhwani, where is the person?"
+ *
  * Speech recognition continuously restarts after every session.
  */
 class VoiceCommandManager(
     private val context: Context,
     private val onWhatIsInFront: () -> Unit,
-    private val onRead: () -> Unit
+    private val onRead: () -> Unit,
+
+    /**
+     * Called when the user asks where a particular object is.
+     *
+     * Example:
+     *
+     * "where is the door?"
+     *
+     * callback receives:
+     *
+     * "door"
+     */
+    private val onLocateObject: (String) -> Unit
 ) {
 
     companion object {
@@ -420,11 +444,6 @@ class VoiceCommandManager(
                         true
                     )
 
-                    /*
-                     * Give Android enough time to understand
-                     * that the user finished the command.
-                     */
-
                     putExtra(
                         RecognizerIntent
                             .EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
@@ -448,10 +467,6 @@ class VoiceCommandManager(
                             .EXTRA_MAX_RESULTS,
                         5
                     )
-
-                    /*
-                     * Online recognition allowed.
-                     */
 
                     putExtra(
                         RecognizerIntent
@@ -544,15 +559,7 @@ class VoiceCommandManager(
         }
 
         // -----------------------------------------------------
-        // READ COMMAND
-        //
-        // Check READ first because:
-        //
-        // "read"
-        // "read this"
-        // "read it"
-        //
-        // are very specific.
+        // READ
         // -----------------------------------------------------
 
         if (
@@ -589,6 +596,34 @@ class VoiceCommandManager(
             return true
         }
 
+        // -----------------------------------------------------
+        // LOCATE OBJECT
+        // -----------------------------------------------------
+
+        val objectName =
+            extractLocateObject(normalized)
+
+        if (
+            objectName != null
+        ) {
+
+            Log.d(
+                TAG,
+                "LOCATE OBJECT COMMAND MATCHED"
+            )
+
+            Log.d(
+                TAG,
+                "Requested object = [$objectName]"
+            )
+
+            triggerLocateObject(
+                objectName
+            )
+
+            return true
+        }
+
         return false
     }
 
@@ -602,19 +637,14 @@ class VoiceCommandManager(
 
         return text
             .lowercase(Locale.US)
-
-            // Convert apostrophes etc.
-            // into spaces.
             .replace(
                 Regex("[^a-z0-9 ]"),
                 " "
             )
-
             .replace(
                 Regex("\\s+"),
                 " "
             )
-
             .trim()
     }
 
@@ -625,21 +655,6 @@ class VoiceCommandManager(
     private fun containsWakeWord(
         normalized: String
     ): Boolean {
-
-        /*
-         * Android speech recognition can produce:
-         *
-         * hey dhwani
-         * hey dhvani
-         * hey dhvni
-         * hi dhwani
-         * hi dhvni
-         * hey dhoni
-         * dhwani
-         * dhvani
-         * dhvni
-         * dhoni
-         */
 
         return normalized.contains(
             "hey dhwani"
@@ -686,17 +701,6 @@ class VoiceCommandManager(
     private fun isReadCommand(
         normalized: String
     ): Boolean {
-
-        /*
-         * Accepted:
-         *
-         * hey dhwani read
-         * hey dhwani read this
-         * hey dhwani read it
-         * hey dhwani please read
-         * hey dhwani read this text
-         * hi dhvni read
-         */
 
         val commandPart =
             removeWakeWords(
@@ -748,22 +752,9 @@ class VoiceCommandManager(
             return true
         }
 
-        /*
-         * More tolerant recognition.
-         *
-         * Example:
-         *
-         * "hey dhwani can you read"
-         */
-
-        val containsRead =
-            commandPart.contains(
-                Regex(
-                    "\\bread\\b"
-                )
-            )
-
-        return containsRead
+        return commandPart.contains(
+            Regex("\\bread\\b")
+        )
     }
 
     // =========================================================
@@ -820,6 +811,137 @@ class VoiceCommandManager(
     }
 
     // =========================================================
+    // LOCATE OBJECT COMMAND
+    // =========================================================
+
+    /**
+     * Extracts an object name from commands such as:
+     *
+     * "where is the door"
+     * "where's the door"
+     * "find the door"
+     * "locate the door"
+     * "where is pothole"
+     * "find stairs"
+     */
+    private fun extractLocateObject(
+        normalized: String
+    ): String? {
+
+        val commandPart =
+            removeWakeWords(
+                normalized
+            )
+
+        Log.d(
+            TAG,
+            "Locate command part: [$commandPart]"
+        )
+
+        val patterns =
+            listOf(
+
+                // where is X
+                Regex(
+                    "^where is (?:the |a |an )?(.+)$"
+                ),
+
+                // where are X
+                Regex(
+                    "^where are (?:the |some )?(.+)$"
+                ),
+
+                // where's X
+                Regex(
+                    "^wheres (?:the |a |an )?(.+)$"
+                ),
+
+                // find X
+                Regex(
+                    "^find (?:the |a |an )?(.+)$"
+                ),
+
+                // locate X
+                Regex(
+                    "^locate (?:the |a |an )?(.+)$"
+                ),
+
+                // tell me where X is
+                Regex(
+                    "^tell me where (?:the |a |an )?(.+) is$"
+                ),
+
+                // can you find X
+                Regex(
+                    "^can you find (?:the |a |an )?(.+)$"
+                ),
+
+                // can you locate X
+                Regex(
+                    "^can you locate (?:the |a |an )?(.+)$"
+                )
+            )
+
+        for (pattern in patterns) {
+
+            val match =
+                pattern.find(commandPart)
+
+            if (match != null) {
+
+                var objectName =
+                    match.groupValues[1]
+                        .trim()
+
+                objectName =
+                    cleanObjectName(
+                        objectName
+                    )
+
+                if (
+                    objectName.isNotBlank()
+                ) {
+
+                    return objectName
+                }
+            }
+        }
+
+        return null
+    }
+
+    // =========================================================
+    // CLEAN OBJECT NAME
+    // =========================================================
+
+    private fun cleanObjectName(
+        text: String
+    ): String {
+
+        var result =
+            text
+                .lowercase(Locale.US)
+                .trim()
+
+        // Remove polite trailing phrases.
+        result =
+            result
+                .removeSuffix(" please")
+                .removeSuffix(" for me")
+                .trim()
+
+        // Remove common articles.
+        result =
+            result
+                .removePrefix("the ")
+                .removePrefix("a ")
+                .removePrefix("an ")
+                .trim()
+
+        return result
+    }
+
+    // =========================================================
     // REMOVE WAKE WORD
     // =========================================================
 
@@ -849,10 +971,6 @@ class VoiceCommandManager(
                     " "
                 )
         }
-
-        /*
-         * Also remove isolated wake names.
-         */
 
         result =
             result.replace(
@@ -910,11 +1028,6 @@ class VoiceCommandManager(
             "READ COMMAND TRIGGERED"
         )
 
-        Log.d(
-            TAG,
-            "Calling onRead()"
-        )
-
         try {
 
             speechRecognizer
@@ -969,11 +1082,6 @@ class VoiceCommandManager(
             "WHAT IS IN FRONT TRIGGERED"
         )
 
-        Log.d(
-            TAG,
-            "Calling onWhatIsInFront()"
-        )
-
         try {
 
             speechRecognizer
@@ -997,6 +1105,69 @@ class VoiceCommandManager(
             Log.e(
                 TAG,
                 "ERROR inside onWhatIsInFront()",
+                e
+            )
+        }
+
+        resetCommandAfterCooldown()
+    }
+
+    // =========================================================
+    // TRIGGER LOCATE OBJECT
+    // =========================================================
+
+    private fun triggerLocateObject(
+        objectName: String
+    ) {
+
+        if (
+            !canTriggerCommand()
+        ) {
+            return
+        }
+
+        commandTriggered = true
+
+        Log.d(
+            TAG,
+            "================================"
+        )
+
+        Log.d(
+            TAG,
+            "LOCATE OBJECT TRIGGERED"
+        )
+
+        Log.d(
+            TAG,
+            "Object = [$objectName]"
+        )
+
+        try {
+
+            speechRecognizer
+                ?.stopListening()
+
+        } catch (e: Exception) {
+
+            Log.e(
+                TAG,
+                "Error stopping recognizer",
+                e
+            )
+        }
+
+        try {
+
+            onLocateObject(
+                objectName
+            )
+
+        } catch (e: Exception) {
+
+            Log.e(
+                TAG,
+                "ERROR inside onLocateObject()",
                 e
             )
         }

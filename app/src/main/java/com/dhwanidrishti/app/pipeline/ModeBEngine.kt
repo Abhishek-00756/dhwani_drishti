@@ -1,7 +1,8 @@
 package com.dhwanidrishti.app.pipeline
-import android.util.Log
+
 import android.content.Context
 import android.graphics.Bitmap
+import android.util.Log
 import com.dhwanidrishti.app.audio.AnnouncementManager
 import com.dhwanidrishti.app.ml.ObjectDetector
 import com.dhwanidrishti.app.ml.RiskEngine
@@ -16,7 +17,7 @@ import com.dhwanidrishti.app.processing.fuseDetectionsWithDepth
  *
  * Camera frame
  *      ↓
- * YOLO object detection
+ * YOLO26m object detection
  *      ↓
  * MiDaS depth fusion
  *      ↓
@@ -24,17 +25,14 @@ import com.dhwanidrishti.app.processing.fuseDetectionsWithDepth
  *      ↓
  * Risk evaluation
  *      ↓
- * Voice announcement
+ * Automatic voice announcement
  *
- * Automatic examples:
- *
- * "Person very close"
- * "Laptop to your left, nearby"
- * "Person approaching from your right"
- *
- * Voice-command examples:
+ * Voice commands:
  *
  * "Hey Dhwani, what's in front of me?"
+ * "Hey Dhwani, what is in front of me?"
+ * "Hey Dhwani, where is the door?"
+ * "Hey Dhwani, where is the person?"
  * "Hey Dhwani, read"
  */
 class ModeBEngine(
@@ -42,40 +40,77 @@ class ModeBEngine(
     private val minDetectionIntervalMs: Long = 150L
 ) {
 
+    companion object {
+        private const val TAG = "ModeBEngine"
+
+        /**
+         * Your new 17-class YOLO26m LiteRT model.
+         *
+         * This file must exist in:
+         *
+         * app/src/main/assets/dhwani_drishti_17class.tflite
+         */
+        private const val MODEL_FILE =
+            "dhwani_drishti_17class.tflite"
+    }
+
     // =========================================================
     // MODELS
     // =========================================================
 
     /**
-     * YOLOv8 object detector.
+     * YOLO26m 17-class object detector.
      *
-     * Loaded when Mode B is first activated.
+     * Model classes:
+     *
+     * 0  person
+     * 1  bicycle
+     * 2  car
+     * 3  motorcycle
+     * 4  truck
+     * 5  stop sign
+     * 6  bench
+     * 7  dog
+     * 8  chair
+     * 9  bed
+     * 10 laptop
+     * 11 book
+     * 12 bag
+     * 13 door
+     * 14 window
+     * 15 stair
+     * 16 pothole
      */
-    private val detector = ObjectDetector(context)
+    private val detector =
+        ObjectDetector(
+            context = context,
+            modelPath = MODEL_FILE
+        )
 
     /**
-     * Lightweight centroid tracker.
+     * Tracks detected objects between frames.
      *
-     * Keeps object identity between frames and allows us to
-     * determine whether an object is approaching.
+     * Used for:
+     *
+     * - object identity
+     * - approaching detection
+     * - movement detection
+     * - distance history
      */
-    private val tracker = ObjectTracker()
+    private val tracker =
+        ObjectTracker()
 
     /**
-     * Determines obstacle risk from the detected object.
+     * Evaluates obstacle risk.
      */
-    private val riskEngine = RiskEngine()
+    private val riskEngine =
+        RiskEngine()
 
     /**
-     * Handles all spoken output.
-     *
-     * This includes:
-     *
-     * 1. Automatic obstacle warnings
-     * 2. "What's in front of me?"
-     * 3. "Read"
+     * Handles spoken output.
      */
-    private val announcements = AnnouncementManager(context)
+    private val announcements =
+        AnnouncementManager(context)
 
     // =========================================================
     // DETECTION THROTTLING
@@ -89,15 +124,10 @@ class ModeBEngine(
     // =========================================================
 
     /**
-     * Latest successfully tracked scene.
+     * Most recent successfully tracked objects.
      *
-     * This is intentionally kept even when YOLO misses a frame.
-     *
-     * That makes voice commands more reliable because:
-     *
-     * "Hey Dhwani, what's in front of me?"
-     *
-     * can use the most recent valid scene.
+     * This is deliberately preserved when YOLO temporarily
+     * misses a frame.
      */
     @Volatile
     private var latestTrackedObjects:
@@ -116,12 +146,11 @@ class ModeBEngine(
         private set
 
     // =========================================================
-    // HYBRID MODE
+    // SPEAKING STATE
     // =========================================================
 
     /**
-     * Used by DhwaniPipeline to duck the soundscape while TTS
-     * is speaking.
+     * Used by DhwaniPipeline to know when TTS is speaking.
      */
     val isSpeaking: Boolean
         get() = announcements.isSpeaking
@@ -133,199 +162,251 @@ class ModeBEngine(
     /**
      * Processes one camera frame.
      *
+     * Pipeline:
+     *
+     * 1. YOLO detection
+     * 2. MiDaS depth fusion
+     * 3. Object tracking
+     * 4. Risk evaluation
+     * 5. Automatic announcement
+     *
      * @param closeness
-     * MiDaS normalized depth map.
+     * MiDaS normalized closeness map.
      *
      * 1.0 = closest
      * 0.0 = farthest
      *
      * @param frame
-     * Original camera frame used by YOLO.
+     * Original camera frame.
      */
     fun process(
         closeness: Array<FloatArray>,
         frame: Bitmap
     ) {
 
-        val now = System.currentTimeMillis()
+        val now =
+            System.currentTimeMillis()
 
         // =====================================================
-        // DETECTION THROTTLING
+        // 1. DETECTION THROTTLING
         // =====================================================
 
-        /**
-         * Depth can run at a higher frequency.
-         *
-         * YOLO does not need to run on every camera frame.
-         *
-         * Example:
-         *
-         * Camera:
-         * 20 FPS
-         *
-         * YOLO:
-         * ~6-7 FPS
-         */
-        if (now - lastDetectionMs < minDetectionIntervalMs) {
+        if (
+            now - lastDetectionMs <
+            minDetectionIntervalMs
+        ) {
             return
         }
 
-        lastDetectionMs = now
+        lastDetectionMs =
+            now
 
         // =====================================================
-        // 1. YOLO OBJECT DETECTION
+        // 2. YOLO OBJECT DETECTION
         // =====================================================
 
-        val rawDetections = try {
-            detector.detect(frame)
-        } catch (e: Exception) {
-            e.printStackTrace()
-            emptyList()
-        }
+        val rawDetections =
+            try {
 
-        /**
-         * Important:
-         *
-         * Do NOT clear latestTrackedObjects here.
-         *
-         * YOLO can occasionally miss a frame.
-         *
-         * Keeping the last valid scene makes:
-         *
-         * "What's in front of me?"
-         *
-         * more reliable.
-         */
-        if (rawDetections.isEmpty()) {
-            highestRisk = null
+                detector.detect(frame)
 
-            return
-        }
+            } catch (e: Exception) {
 
-        // =====================================================
-        // 2. DEPTH FUSION
-        // =====================================================
+                Log.e(
+                    TAG,
+                    "YOLO detection failed",
+                    e
+                )
 
-        /**
-         * Combines:
-         *
-         * YOLO bounding boxes
-         * +
-         * MiDaS depth
-         *
-         * Result:
-         *
-         * DetectedObject
-         *
-         * containing:
-         *
-         * - label
-         * - boundingBox
-         * - confidence
-         * - distance
-         */
-        val detectedObjects = try {
-            fuseDetectionsWithDepth(
-                detections = rawDetections,
-                depthMap = closeness
-            )
-        } catch (e: Exception) {
-            e.printStackTrace()
-            emptyList()
-        }
+                emptyList()
+            }
 
-        if (detectedObjects.isEmpty()) {
-            highestRisk = null
-            return
-        }
-
-        // =====================================================
-        // 3. OBJECT TRACKING
-        // =====================================================
-
-        val trackedObjects = tracker.update(
-            detectedObjects
+        Log.d(
+            TAG,
+            "YOLO detections: ${rawDetections.size}"
         )
 
-        /**
-         * Save a copy of the latest valid scene.
-         *
-         * Voice commands will read this list.
-         */
+        // -----------------------------------------------------
+        // If YOLO sees nothing, keep the previous scene.
+        // -----------------------------------------------------
+
+        if (rawDetections.isEmpty()) {
+
+            highestRisk =
+                null
+
+            return
+        }
+
+        // =====================================================
+        // 3. DEPTH FUSION
+        // =====================================================
+
+        val detectedObjects =
+            try {
+
+                fuseDetectionsWithDepth(
+                    detections = rawDetections,
+                    depthMap = closeness
+                )
+
+            } catch (e: Exception) {
+
+                Log.e(
+                    TAG,
+                    "Depth fusion failed",
+                    e
+                )
+
+                emptyList()
+            }
+
+        if (detectedObjects.isEmpty()) {
+
+            highestRisk =
+                null
+
+            return
+        }
+
+        Log.d(
+            TAG,
+            "Depth-fused objects: ${detectedObjects.size}"
+        )
+
+        // =====================================================
+        // 4. OBJECT TRACKING
+        // =====================================================
+
+        val trackedObjects =
+            try {
+
+                tracker.update(
+                    detectedObjects
+                )
+
+            } catch (e: Exception) {
+
+                Log.e(
+                    TAG,
+                    "Object tracking failed",
+                    e
+                )
+
+                emptyList()
+            }
+
+        // -----------------------------------------------------
+        // Save latest valid scene.
+        // -----------------------------------------------------
+
         latestTrackedObjects =
             trackedObjects.toList()
 
         trackedCount =
             trackedObjects.size
 
+        Log.d(
+            TAG,
+            "Tracked objects: $trackedCount"
+        )
+
         // =====================================================
-        // 4. RISK EVALUATION
+        // 5. RISK EVALUATION
         // =====================================================
 
-        var mostDangerousRisk: RiskResult? = null
+        var mostDangerousRisk:
+                RiskResult? = null
 
-        for (detectedObject in detectedObjects) {
+        for (
+        detectedObject
+        in detectedObjects
+        ) {
 
-            val risk = try {
-                riskEngine.evaluate(
-                    detectedObject
-                )
-            } catch (e: Exception) {
-                e.printStackTrace()
-                continue
-            }
+            val risk =
+                try {
+
+                    riskEngine.evaluate(
+                        detectedObject
+                    )
+
+                } catch (e: Exception) {
+
+                    Log.e(
+                        TAG,
+                        "Risk evaluation failed",
+                        e
+                    )
+
+                    continue
+                }
 
             if (
                 mostDangerousRisk == null ||
-                risk.score > mostDangerousRisk!!.score
+                risk.score >
+                mostDangerousRisk!!.score
             ) {
-                mostDangerousRisk = risk
+
+                mostDangerousRisk =
+                    risk
             }
         }
 
-        highestRisk = mostDangerousRisk
+        highestRisk =
+            mostDangerousRisk
 
         // =====================================================
-        // 5. AUTOMATIC ANNOUNCEMENT
+        // 6. AUTOMATIC ANNOUNCEMENT
         // =====================================================
 
-        /**
-         * AnnouncementManager decides:
-         *
-         * - whether the object is close enough
-         * - whether it is approaching
-         * - cooldown
-         * - priority
-         * - left / center / right
-         */
-        announcements.evaluate(
-            tracked = trackedObjects,
-            tracker = tracker
-        )
+        try {
+
+            announcements.evaluate(
+                tracked = trackedObjects,
+                tracker = tracker
+            )
+
+        } catch (e: Exception) {
+
+            Log.e(
+                TAG,
+                "Automatic announcement failed",
+                e
+            )
+        }
     }
 
     // =========================================================
-    // VOICE COMMAND:
+    // VOICE COMMAND
     //
     // "HEY DHWANI, WHAT'S IN FRONT OF ME?"
     // =========================================================
 
     /**
-     * Gives the user an immediate description of the current
-     * camera scene.
+     * Describes the currently visible scene.
      *
      * Example:
      *
-     * "I see a laptop and a person in front of you."
-     *
-     * If nothing is detected:
-     *
-     * "I don't see anything in front of you."
+     * "I see a person and a laptop in front of you."
      */
     fun answerWhatIsInFront() {
 
+        Log.d(
+            TAG,
+            "Voice command: what's in front of me"
+        )
+
         val scene =
             latestTrackedObjects
+
+        if (scene.isEmpty()) {
+
+            announcements.speak(
+                "I don't see any objects in front of you."
+            )
+
+            return
+        }
 
         announcements.announceWhatIsInFront(
             scene
@@ -333,18 +414,210 @@ class ModeBEngine(
     }
 
     // =========================================================
-    // VOICE COMMAND:
+    // VOICE COMMAND
+    //
+    // "HEY DHWANI, WHERE IS THE DOOR?"
+    // =========================================================
+
+    /**
+     * Finds a requested object in the latest scene and
+     * announces its position.
+     *
+     * Examples:
+     *
+     * "Where is the door?"
+     * -> "Door is on your left."
+     *
+     * "Where is the person?"
+     * -> "Person is in front of you."
+     *
+     * "Where is the laptop?"
+     * -> "Laptop is on your right."
+     */
+    fun answerWhereIs(
+        objectName: String
+    ) {
+
+        Log.d(
+            TAG,
+            "Location query received: [$objectName]"
+        )
+
+        // -----------------------------------------------------
+        // Normalize user's requested object name.
+        // -----------------------------------------------------
+
+        val requestedObject =
+            objectName
+                .trim()
+                .lowercase()
+
+        if (requestedObject.isEmpty()) {
+
+            announcements.speak(
+                "What object are you looking for?"
+            )
+
+            return
+        }
+
+        // -----------------------------------------------------
+        // Get latest scene.
+        // -----------------------------------------------------
+
+        val scene =
+            latestTrackedObjects
+
+        if (scene.isEmpty()) {
+
+            announcements.speak(
+                "I don't currently see any objects."
+            )
+
+            return
+        }
+
+        // -----------------------------------------------------
+        // Find matching objects.
+        //
+        // contains() makes the command more tolerant.
+        //
+        // Example:
+        //
+        // "door"
+        // matches "door"
+        //
+        // "laptop"
+        // matches "laptop"
+        // -----------------------------------------------------
+
+        val matchingObjects =
+            scene.filter { trackedObject ->
+
+                trackedObject.label
+                    .trim()
+                    .lowercase()
+                    .contains(
+                        requestedObject
+                    )
+            }
+
+        // -----------------------------------------------------
+        // Object not found.
+        // -----------------------------------------------------
+
+        if (matchingObjects.isEmpty()) {
+
+            val spokenName =
+                requestedObject
+                    .replaceFirstChar {
+                        it.uppercase()
+                    }
+
+            val message =
+                "I don't see a $spokenName."
+
+            Log.d(
+                TAG,
+                "Location query: object not found"
+            )
+
+            announcements.speak(
+                message
+            )
+
+            return
+        }
+
+        // -----------------------------------------------------
+        // If multiple matching objects exist,
+        // select the closest one.
+        //
+        // lastDistance:
+        //
+        // 0.0 = closest
+        // 1.0 = farthest
+        // -----------------------------------------------------
+
+        val trackedObject =
+            matchingObjects.minByOrNull {
+                it.lastDistance
+            }
+
+        if (trackedObject == null) {
+
+            announcements.speak(
+                "I found the object, but I cannot determine its position."
+            )
+
+            return
+        }
+
+        // =====================================================
+        // DETERMINE LEFT / CENTER / RIGHT
+        // =====================================================
+
+        val position =
+            when (
+                trackedObject.lastZone.name
+                    .uppercase()
+            ) {
+
+                "LEFT" ->
+                    "on your left"
+
+                "RIGHT" ->
+                    "on your right"
+
+                "CENTER" ->
+                    "in front of you"
+
+                else ->
+                    "in your view"
+            }
+
+        // -----------------------------------------------------
+        // Human-readable object name.
+        // -----------------------------------------------------
+
+        val spokenName =
+            trackedObject.label
+                .replaceFirstChar {
+                    it.uppercase()
+                }
+
+        // -----------------------------------------------------
+        // Final response.
+        // -----------------------------------------------------
+
+        val message =
+            "$spokenName is $position."
+
+        Log.d(
+            TAG,
+            "Location query result: $message"
+        )
+
+        announcements.speak(
+            message
+        )
+    }
+
+    // =========================================================
+    // VOICE COMMAND
     //
     // "HEY DHWANI, READ"
     // =========================================================
 
     /**
-     * Reads text visible in front of the camera.
-     *
-     * The actual OCR/TTS implementation belongs to
-     * AnnouncementManager.
+     * Requests the current reading/OCR operation.
      */
     fun answerRead() {
+
+        Log.d(
+            TAG,
+            "Voice command: read"
+        )
 
         val scene =
             latestTrackedObjects
@@ -353,25 +626,39 @@ class ModeBEngine(
             scene
         )
     }
+
+    // =========================================================
+    // DIRECT SPEECH
+    // =========================================================
+
+    /**
+     * Allows other parts of the application, especially OCR,
+     * to directly speak a message.
+     */
     fun speak(
         text: String
     ) {
 
+        if (text.isBlank()) {
+            return
+        }
+
         Log.d(
-            "DHWANI_OCR",
+            TAG,
             "TTS -> [$text]"
         )
 
-        announcements.speak(text)
+        announcements.speak(
+            text
+        )
     }
+
     // =========================================================
-    // OPTIONAL PUBLIC SCENE ACCESS
+    // PUBLIC SCENE ACCESS
     // =========================================================
 
     /**
      * Returns the latest tracked scene.
-     *
-     * Useful for debugging or future UI features.
      */
     fun getLatestTrackedObjects():
             List<ObjectTracker.TrackedObject> {
@@ -384,19 +671,53 @@ class ModeBEngine(
     // =========================================================
 
     /**
-     * Releases Mode B resources.
+     * Releases all Mode B resources.
      */
     fun shutdown() {
+
+        Log.d(
+            TAG,
+            "Shutting down Mode B"
+        )
 
         latestTrackedObjects =
             emptyList()
 
-        trackedCount = 0
+        trackedCount =
+            0
 
-        highestRisk = null
+        highestRisk =
+            null
 
-        announcements.shutdown()
+        try {
 
-        detector.close()
+            announcements.shutdown()
+
+        } catch (e: Exception) {
+
+            Log.e(
+                TAG,
+                "Error shutting down announcements",
+                e
+            )
+        }
+
+        try {
+
+            detector.close()
+
+        } catch (e: Exception) {
+
+            Log.e(
+                TAG,
+                "Error closing detector",
+                e
+            )
+        }
+
+        Log.d(
+            TAG,
+            "Mode B shutdown complete"
+        )
     }
 }

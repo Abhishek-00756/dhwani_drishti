@@ -108,6 +108,7 @@ class MainActivity : AppCompatActivity() {
                  * Camera can still work without
                  * voice commands.
                  */
+
                 startVisionPipeline()
             }
         }
@@ -381,7 +382,6 @@ class MainActivity : AppCompatActivity() {
 
         val p =
             DhwaniPipeline(
-
                 applicationContext,
 
                 onStats = {
@@ -408,15 +408,10 @@ class MainActivity : AppCompatActivity() {
 
         cameraController =
             CameraController(
-
                 this,
-
                 this,
-
                 previewView,
-
                 p::submitFrame
-
             ).also {
 
                 it.start()
@@ -477,30 +472,42 @@ class MainActivity : AppCompatActivity() {
                 Manifest.permission.RECORD_AUDIO
             )
 
+
         Log.d(
             "DHWANI_VOICE",
             "startVoiceCommands() permission = $permission"
         )
 
+
         if (
             permission !=
             PackageManager.PERMISSION_GRANTED
         ) {
+
             Log.e(
                 "DHWANI_VOICE",
                 "RECORD_AUDIO permission NOT GRANTED"
             )
+
             return
         }
+
 
         Log.d(
             "DHWANI_VOICE",
             "Starting VoiceCommandManager"
         )
 
+
         voiceCommandManager =
             VoiceCommandManager(
+
                 context = this,
+
+
+                // -------------------------------------------------
+                // WHAT IS IN FRONT
+                // -------------------------------------------------
 
                 onWhatIsInFront = {
 
@@ -512,6 +519,11 @@ class MainActivity : AppCompatActivity() {
                     pipeline?.answerWhatIsInFront()
                 },
 
+
+                // -------------------------------------------------
+                // READ
+                // -------------------------------------------------
+
                 onRead = {
 
                     Log.d(
@@ -520,12 +532,44 @@ class MainActivity : AppCompatActivity() {
                     )
 
                     pipeline?.answerRead()
+                },
+
+
+                // -------------------------------------------------
+                // LOCATE OBJECT
+                //
+                // Example:
+                //
+                // "Hey Dhwani, where is the door?"
+                //
+                // VoiceCommandManager extracts:
+                //
+                // objectName = "door"
+                //
+                // Then DhwaniPipeline handles:
+                //
+                // door -> LEFT / CENTER / RIGHT
+                // -------------------------------------------------
+
+                onLocateObject = { objectName ->
+
+                    Log.d(
+                        "DHWANI_VOICE",
+                        "VOICE CALLBACK -> answerWhereIs($objectName)"
+                    )
+
+                    pipeline?.answerWhereIs(
+                        objectName
+                    )
                 }
 
             ).also {
+
                 it.start()
             }
-    }
+
+    }   // IMPORTANT: closes startVoiceCommands()
+
 
     // =========================================================
     // MODE
@@ -539,7 +583,6 @@ class MainActivity : AppCompatActivity() {
 
 
         p.mode =
-
             when (p.mode) {
 
                 AppMode.SOUNDSCAPE ->
@@ -596,7 +639,6 @@ class MainActivity : AppCompatActivity() {
 
 
         val label =
-
             when (p.mode) {
 
                 AppMode.SOUNDSCAPE ->
@@ -622,7 +664,6 @@ class MainActivity : AppCompatActivity() {
 
 
         modeToggle.text =
-
             getString(
                 R.string.mode_toggle_format,
                 label
@@ -648,9 +689,7 @@ class MainActivity : AppCompatActivity() {
             getString(
                 R.string.calibration_intro
             ) +
-
                     " " +
-
                     calibrationStepHint.text
         )
     }
@@ -711,7 +750,6 @@ class MainActivity : AppCompatActivity() {
 
 
         calibrationStatus.text =
-
             getString(
                 R.string.calibration_status,
                 near,
@@ -827,7 +865,6 @@ class MainActivity : AppCompatActivity() {
 
 
     private val uiStatsRunnable =
-
         object : Runnable {
 
             override fun run() {
@@ -837,7 +874,6 @@ class MainActivity : AppCompatActivity() {
 
 
                 val dtSeconds =
-
                     (
                             now -
                                     lastUpdateNs
@@ -854,7 +890,6 @@ class MainActivity : AppCompatActivity() {
                 ) {
 
                     val fps =
-
                         (
                                 stats.frames -
                                         lastFrames
@@ -862,11 +897,9 @@ class MainActivity : AppCompatActivity() {
 
 
                     statsView.text =
-
                         getString(
 
                             R.string.stats_format,
-
 
                             String.format(
                                 Locale.US,
@@ -874,20 +907,17 @@ class MainActivity : AppCompatActivity() {
                                 fps
                             ),
 
-
                             String.format(
                                 Locale.US,
                                 "%.1f",
                                 stats.inferenceMs
                             ),
 
-
                             String.format(
                                 Locale.US,
                                 "%.1f",
                                 stats.totalMs
                             ),
-
 
                             stats.objectsTracked.toString()
                         )
