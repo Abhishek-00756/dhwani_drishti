@@ -521,11 +521,7 @@ class DhwaniPipeline(
             // MODE B
             // =================================================
 
-            if (
-                mode == AppMode.NARRATED ||
-                mode == AppMode.HYBRID
-            ) {
-
+            if (mode == AppMode.NARRATED) {
                 modeBEngine()
                     .process(
                         closeness,
@@ -705,12 +701,7 @@ enum class AppMode {
     /**
      * Spoken object descriptions.
      */
-    NARRATED,
-
-    /**
-     * Soundscape + spoken descriptions.
-     */
-    HYBRID
+    NARRATED
 }
 
 

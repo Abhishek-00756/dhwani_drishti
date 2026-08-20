@@ -25,19 +25,22 @@ class ObjectDetector(
 
         private const val TAG = "ObjectDetector"
 
+        // ============================================================
+        // YOLO26m DHWANI DRISHTI MODEL
+        // ============================================================
+
         /*
-         * ============================================================
-         * YOLO26m DHWANI DRISHTI MODEL
-         * ============================================================
-         *
          * Input:
-         *      [1, 3, 512, 512]
+         *
+         * [1, 3, 512, 512]
          *
          * Output:
-         *      [1, 300, 6]
+         *
+         * [1, 300, 6]
          *
          * Each detection:
-         *      [x1, y1, x2, y2, confidence, classId]
+         *
+         * [x1, y1, x2, y2, confidence, classId]
          */
 
         private const val MODEL_NAME =
@@ -49,21 +52,16 @@ class ObjectDetector(
 
         private const val VALUES_PER_DETECTION = 6
 
-        /*
-         * Initial confidence threshold.
-         *
-         * We can tune this after testing on the phone.
-         */
         private const val CONFIDENCE_THRESHOLD = 0.35f
 
+        // ============================================================
+        // 17 CUSTOM CLASSES
+        // ============================================================
+
         /*
-         * ============================================================
-         * 17 MODEL CLASSES
-         * ============================================================
+         * IMPORTANT:
          *
-         * DO NOT CHANGE THE ORDER.
-         *
-         * These IDs come directly from the trained model.
+         * The order MUST exactly match the trained model.
          */
 
         val LABELS = listOf(
@@ -89,27 +87,25 @@ class ObjectDetector(
 
     private val interpreter: Interpreter
 
+    // ============================================================
+    // INITIALIZATION
+    // ============================================================
+
     init {
 
-        /*
-         * Load the model from:
-         *
-         * app/src/main/assets/
-         *
-         * dhwani_drishti_17class.tflite
-         */
         val model = loadModelFile(
-            context,
-            modelPath
+            context = context,
+            modelPath = modelPath
         )
 
-        /*
-         * CPU configuration for the first integration.
-         *
-         * We will optimize inference speed after we confirm
-         * detection accuracy and correctness.
-         */
         val options = Interpreter.Options().apply {
+
+            /*
+             * CPU first.
+             *
+             * We will optimize later after detection is
+             * confirmed to work correctly.
+             */
             numThreads = 4
         }
 
@@ -135,12 +131,12 @@ class ObjectDetector(
 
         Log.d(
             TAG,
-            "Input: [1, 3, 512, 512]"
+            "Expected input: [1, 3, 512, 512]"
         )
 
         Log.d(
             TAG,
-            "Output: [1, 300, 6]"
+            "Expected output: [1, 300, 6]"
         )
 
         Log.d(
@@ -153,51 +149,60 @@ class ObjectDetector(
             "========================================"
         )
 
-        /*
-         * Verify the actual model tensors.
-         */
-        Log.d(
-            TAG,
-            "Actual input shape: ${
-                interpreter
-                    .getInputTensor(0)
-                    .shape()
-                    .contentToString()
-            }"
-        )
+        // ========================================================
+        // VERIFY ACTUAL MODEL TENSORS
+        // ========================================================
 
-        Log.d(
-            TAG,
-            "Actual input type: ${
-                interpreter
-                    .getInputTensor(0)
-                    .dataType()
-            }"
-        )
+        try {
 
-        Log.d(
-            TAG,
-            "Actual output shape: ${
-                interpreter
-                    .getOutputTensor(0)
-                    .shape()
-                    .contentToString()
-            }"
-        )
+            val inputTensor =
+                interpreter.getInputTensor(0)
 
-        Log.d(
-            TAG,
-            "Actual output type: ${
-                interpreter
-                    .getOutputTensor(0)
-                    .dataType()
-            }"
-        )
+            val outputTensor =
+                interpreter.getOutputTensor(0)
+
+            Log.d(
+                TAG,
+                "Actual input shape: ${
+                    inputTensor.shape().contentToString()
+                }"
+            )
+
+            Log.d(
+                TAG,
+                "Actual input type: ${
+                    inputTensor.dataType()
+                }"
+            )
+
+            Log.d(
+                TAG,
+                "Actual output shape: ${
+                    outputTensor.shape().contentToString()
+                }"
+            )
+
+            Log.d(
+                TAG,
+                "Actual output type: ${
+                    outputTensor.dataType()
+                }"
+            )
+
+        } catch (e: Exception) {
+
+            Log.e(
+                TAG,
+                "Unable to inspect model tensors",
+                e
+            )
+        }
     }
 
-    /**
-     * Loads the .tflite model from app/src/main/assets.
-     */
+    // ============================================================
+    // LOAD MODEL
+    // ============================================================
+
     private fun loadModelFile(
         context: Context,
         modelPath: String
@@ -220,26 +225,65 @@ class ObjectDetector(
         val declaredLength =
             assetFileDescriptor.declaredLength
 
-        return fileChannel.map(
-            FileChannel.MapMode.READ_ONLY,
-            startOffset,
-            declaredLength
-        )
+        return try {
+
+            fileChannel.map(
+                FileChannel.MapMode.READ_ONLY,
+                startOffset,
+                declaredLength
+            )
+
+        } finally {
+
+            /*
+             * The mapped buffer remains usable after the
+             * underlying stream/channel is closed.
+             */
+
+            try {
+                fileChannel.close()
+            } catch (_: Exception) {
+            }
+
+            try {
+                inputStream.close()
+            } catch (_: Exception) {
+            }
+
+            try {
+                assetFileDescriptor.close()
+            } catch (_: Exception) {
+            }
+        }
     }
 
+    // ============================================================
+    // DETECTION
+    // ============================================================
+
     /**
-     * Runs YOLO26m detection on a camera frame.
+     * Runs YOLO26m detection on one camera frame.
      *
      * Input:
-     *      Any Bitmap size.
+     *
+     * Any Bitmap size.
      *
      * Processing:
-     *      Letterbox -> 512x512 -> NCHW float32
+     *
+     * Original frame
+     *      ↓
+     * Letterbox
+     *      ↓
+     * 512 × 512
+     *      ↓
+     * NCHW float32
+     *      ↓
+     * YOLO26
      *
      * Output:
-     *      RawDetection objects with normalized
-     *      bounding boxes relative to the original
-     *      camera frame.
+     *
+     * RawDetection objects with bounding boxes normalized
+     * to the ORIGINAL camera frame.
      */
     fun detect(
         bitmap: Bitmap
@@ -249,72 +293,49 @@ class ObjectDetector(
             bitmap.width <= 0 ||
             bitmap.height <= 0
         ) {
+            Log.w(
+                TAG,
+                "Invalid bitmap dimensions"
+            )
+
             return emptyList()
         }
 
-        /*
-         * ============================================================
-         * STEP 1
-         * LETTERBOX IMAGE
-         * ============================================================
-         *
-         * Preserve the camera image aspect ratio.
-         *
-         * We do NOT simply stretch the image to 512x512.
-         */
+        // ========================================================
+        // STEP 1: LETTERBOX
+        // ========================================================
+
         val letterboxResult =
             letterbox(bitmap)
 
-        /*
-         * ============================================================
-         * STEP 2
-         * PREPROCESS
-         * ============================================================
-         *
-         * Model requires:
-         *
-         * [1, 3, 512, 512]
-         *
-         * Therefore:
-         *
-         * R plane
-         * G plane
-         * B plane
-         *
-         * rather than:
-         *
-         * RGB RGB RGB...
-         */
+        // ========================================================
+        // STEP 2: PREPROCESS
+        // ========================================================
+
         val inputBuffer =
             preprocess(
                 letterboxResult.bitmap
             )
 
-        /*
-         * ============================================================
-         * STEP 3
-         * OUTPUT BUFFER
-         * ============================================================
-         *
-         * Model output:
-         *
-         * [1, 300, 6]
-         */
+        // ========================================================
+        // STEP 3: OUTPUT BUFFER
+        // ========================================================
+
         val output =
             Array(1) {
+
                 Array(NUM_DETECTIONS) {
+
                     FloatArray(
                         VALUES_PER_DETECTION
                     )
                 }
             }
 
-        /*
-         * ============================================================
-         * STEP 4
-         * RUN INFERENCE
-         * ============================================================
-         */
+        // ========================================================
+        // STEP 4: RUN YOLO26
+        // ========================================================
+
         try {
 
             interpreter.run(
@@ -326,16 +347,17 @@ class ObjectDetector(
 
             Log.e(
                 TAG,
-                "YOLO inference failed",
+                "YOLO26 inference failed",
                 e
             )
 
             return emptyList()
         }
 
-        /*
-         * Diagnostic output.
-         */
+        // ========================================================
+        // DIAGNOSTIC OUTPUT
+        // ========================================================
+
         Log.d(
             TAG,
             "Raw output row 0: ${
@@ -346,12 +368,10 @@ class ObjectDetector(
         val detections =
             mutableListOf<RawDetection>()
 
-        /*
-         * ============================================================
-         * STEP 5
-         * DECODE DETECTIONS
-         * ============================================================
-         */
+        // ========================================================
+        // STEP 5: DECODE
+        // ========================================================
+
         for (
         i in 0 until NUM_DETECTIONS
         ) {
@@ -377,9 +397,10 @@ class ObjectDetector(
             val classId =
                 row[5].toInt()
 
-            /*
-             * Confidence filter.
-             */
+            // ----------------------------------------------------
+            // CONFIDENCE FILTER
+            // ----------------------------------------------------
+
             if (
                 confidence <
                 CONFIDENCE_THRESHOLD
@@ -387,9 +408,10 @@ class ObjectDetector(
                 continue
             }
 
-            /*
-             * Protect against invalid class IDs.
-             */
+            // ----------------------------------------------------
+            // CLASS VALIDATION
+            // ----------------------------------------------------
+
             if (
                 classId !in LABELS.indices
             ) {
@@ -402,10 +424,10 @@ class ObjectDetector(
                 continue
             }
 
-            /*
-             * Convert model coordinates
-             * back to the original camera frame.
-             */
+            // ----------------------------------------------------
+            // MAP BOX
+            // ----------------------------------------------------
+
             val boundingBox =
                 mapBoxToOriginalFrame(
                     x1 = x1,
@@ -415,9 +437,10 @@ class ObjectDetector(
                     letterbox = letterboxResult
                 )
 
-            /*
-             * Ignore invalid boxes.
-             */
+            // ----------------------------------------------------
+            // INVALID BOX CHECK
+            // ----------------------------------------------------
+
             if (
                 boundingBox.width() <= 0f ||
                 boundingBox.height() <= 0f
@@ -425,8 +448,16 @@ class ObjectDetector(
                 continue
             }
 
+            // ----------------------------------------------------
+            // LABEL
+            // ----------------------------------------------------
+
             val label =
                 LABELS[classId]
+
+            // ----------------------------------------------------
+            // CREATE DETECTION
+            // ----------------------------------------------------
 
             detections.add(
                 RawDetection(
@@ -437,11 +468,10 @@ class ObjectDetector(
             )
         }
 
-        /*
-         * ============================================================
-         * LOG DETECTIONS
-         * ============================================================
-         */
+        // ========================================================
+        // LOG RESULTS
+        // ========================================================
+
         if (
             detections.isNotEmpty()
         ) {
@@ -453,7 +483,7 @@ class ObjectDetector(
 
             Log.d(
                 TAG,
-                "DETECTIONS: ${detections.size}"
+                "YOLO26 DETECTIONS: ${detections.size}"
             )
 
             detections.forEach { detection ->
@@ -488,14 +518,26 @@ class ObjectDetector(
         return detections
     }
 
+    // ============================================================
+    // LETTERBOX
+    // ============================================================
+
     /**
-     * ================================================================
-     * LETTERBOX
-     * ================================================================
+     * Preserves the camera frame aspect ratio.
      *
-     * Resizes the original image while preserving its aspect ratio.
+     * Example:
      *
-     * The remaining area is filled with YOLO-style gray padding.
+     * 1280 × 720
+     *
+     * becomes something like:
+     *
+     * 512 × 288
+     *
+     * inside:
+     *
+     * 512 × 512
+     *
+     * with gray padding.
      */
     private fun letterbox(
         bitmap: Bitmap
@@ -507,14 +549,19 @@ class ObjectDetector(
         val originalHeight =
             bitmap.height.toFloat()
 
-        /*
-         * Calculate scale while preserving aspect ratio.
-         */
+        // --------------------------------------------------------
+        // SCALE
+        // --------------------------------------------------------
+
         val scale =
             min(
                 INPUT_SIZE / originalWidth,
                 INPUT_SIZE / originalHeight
             )
+
+        // --------------------------------------------------------
+        // RESIZED DIMENSIONS
+        // --------------------------------------------------------
 
         val resizedWidth =
             max(
@@ -528,6 +575,10 @@ class ObjectDetector(
                 (originalHeight * scale).toInt()
             )
 
+        // --------------------------------------------------------
+        // RESIZE
+        // --------------------------------------------------------
+
         val resizedBitmap =
             Bitmap.createScaledBitmap(
                 bitmap,
@@ -536,9 +587,10 @@ class ObjectDetector(
                 true
             )
 
-        /*
-         * Create 512x512 output.
-         */
+        // --------------------------------------------------------
+        // CREATE 512 × 512 CANVAS
+        // --------------------------------------------------------
+
         val outputBitmap =
             Bitmap.createBitmap(
                 INPUT_SIZE,
@@ -549,9 +601,10 @@ class ObjectDetector(
         val canvas =
             Canvas(outputBitmap)
 
-        /*
-         * YOLO-style padding.
-         */
+        // --------------------------------------------------------
+        // YOLO PADDING
+        // --------------------------------------------------------
+
         canvas.drawColor(
             Color.rgb(
                 114,
@@ -560,9 +613,10 @@ class ObjectDetector(
             )
         )
 
-        /*
-         * Center resized image.
-         */
+        // --------------------------------------------------------
+        // CENTER IMAGE
+        // --------------------------------------------------------
+
         val padX =
             (INPUT_SIZE - resizedWidth) / 2f
 
@@ -586,11 +640,10 @@ class ObjectDetector(
         )
     }
 
-    /**
-     * Stores information required to map bounding boxes
-     * from the 512x512 letterboxed image back to the
-     * original camera image.
-     */
+    // ============================================================
+    // LETTERBOX RESULT
+    // ============================================================
+
     private data class LetterboxResult(
 
         val bitmap: Bitmap,
@@ -606,28 +659,24 @@ class ObjectDetector(
         val originalHeight: Int
     )
 
+    // ============================================================
+    // PREPROCESS
+    // ============================================================
+
     /**
-     * ================================================================
-     * PREPROCESS
-     * ================================================================
-     *
      * Converts:
      *
      * Bitmap
-     *
-     * into:
-     *
+     *      ↓
      * [1, 3, 512, 512]
      *
-     * float32 tensor.
+     * Layout:
      *
-     * Values:
+     * RRRRR...
+     * GGGGG...
+     * BBBBB...
      *
-     * 0..255
-     *
-     * become:
-     *
-     * 0..1
+     * This is NCHW.
      */
     private fun preprocess(
         bitmap: Bitmap
@@ -636,10 +685,6 @@ class ObjectDetector(
         val pixelCount =
             INPUT_SIZE * INPUT_SIZE
 
-        /*
-         * 3 channels
-         * 4 bytes per float
-         */
         val buffer =
             ByteBuffer
                 .allocateDirect(
@@ -666,11 +711,10 @@ class ObjectDetector(
             INPUT_SIZE
         )
 
-        /*
-         * ============================================================
-         * RED CHANNEL
-         * ============================================================
-         */
+        // ========================================================
+        // RED
+        // ========================================================
+
         for (pixel in pixels) {
 
             buffer.putFloat(
@@ -679,11 +723,10 @@ class ObjectDetector(
             )
         }
 
-        /*
-         * ============================================================
-         * GREEN CHANNEL
-         * ============================================================
-         */
+        // ========================================================
+        // GREEN
+        // ========================================================
+
         for (pixel in pixels) {
 
             buffer.putFloat(
@@ -692,11 +735,10 @@ class ObjectDetector(
             )
         }
 
-        /*
-         * ============================================================
-         * BLUE CHANNEL
-         * ============================================================
-         */
+        // ========================================================
+        // BLUE
+        // ========================================================
+
         for (pixel in pixels) {
 
             buffer.putFloat(
@@ -710,23 +752,31 @@ class ObjectDetector(
         return buffer
     }
 
+    // ============================================================
+    // MAP YOLO BOX TO ORIGINAL CAMERA FRAME
+    // ============================================================
+
     /**
-     * ================================================================
-     * MAP BOUNDING BOX
-     * ================================================================
+     * YOLO26 TFLite end-to-end output:
      *
-     * YOLO gives coordinates relative to the 512x512
-     * letterboxed model input.
+     * [x1, y1, x2, y2, confidence, classId]
      *
-     * We convert them back to normalized coordinates
-     * relative to the ORIGINAL camera frame.
+     * For the TFLite export, box coordinates are normalized
+     * relative to the 512 × 512 model input.
      *
-     * Result:
+     * Therefore:
      *
-     * x1 = 0..1
-     * y1 = 0..1
-     * x2 = 0..1
-     * y2 = 0..1
+     * normalized model coordinate
+     *          ↓
+     * 512 × 512 coordinate
+     *          ↓
+     * remove letterbox padding
+     *          ↓
+     * divide by resize scale
+     *          ↓
+     * original camera frame
+     *          ↓
+     * normalize to 0..1
      */
     private fun mapBoxToOriginalFrame(
         x1: Float,
@@ -736,28 +786,42 @@ class ObjectDetector(
         letterbox: LetterboxResult
     ): RectF {
 
-        /*
-         * Remove letterbox padding.
-         */
+        // ========================================================
+        // STEP 1
+        // NORMALIZED → 512 PIXELS
+        // ========================================================
+
+        val modelX1 = x1
+        val modelY1 = y1
+        val modelX2 = x2
+        val modelY2 = y2
+
+        // ========================================================
+        // STEP 2
+        // REMOVE LETTERBOX PADDING
+        // ========================================================
+
         val originalX1 =
-            (x1 - letterbox.padX) /
+            (modelX1 - letterbox.padX) /
                     letterbox.scale
 
         val originalY1 =
-            (y1 - letterbox.padY) /
+            (modelY1 - letterbox.padY) /
                     letterbox.scale
 
         val originalX2 =
-            (x2 - letterbox.padX) /
+            (modelX2 - letterbox.padX) /
                     letterbox.scale
 
         val originalY2 =
-            (y2 - letterbox.padY) /
+            (modelY2 - letterbox.padY) /
                     letterbox.scale
 
-        /*
-         * Convert to normalized coordinates.
-         */
+        // ========================================================
+        // STEP 3
+        // ORIGINAL PIXELS → NORMALIZED 0..1
+        // ========================================================
+
         val normalizedX1 =
             (
                     originalX1 /
@@ -794,22 +858,28 @@ class ObjectDetector(
                     1f
                 )
 
-        /*
-         * Ensure correct ordering.
-         */
+        // ========================================================
+        // STEP 4
+        // GUARANTEE CORRECT ORDER
+        // ========================================================
+
         return RectF(
+
             min(
                 normalizedX1,
                 normalizedX2
             ),
+
             min(
                 normalizedY1,
                 normalizedY2
             ),
+
             max(
                 normalizedX1,
                 normalizedX2
             ),
+
             max(
                 normalizedY1,
                 normalizedY2
@@ -817,9 +887,10 @@ class ObjectDetector(
         )
     }
 
-    /**
-     * Releases the TFLite interpreter.
-     */
+    // ============================================================
+    // CLOSE
+    // ============================================================
+
     fun close() {
 
         try {
@@ -835,7 +906,7 @@ class ObjectDetector(
 
             Log.e(
                 TAG,
-                "Error closing interpreter",
+                "Error closing YOLO26m interpreter",
                 e
             )
         }

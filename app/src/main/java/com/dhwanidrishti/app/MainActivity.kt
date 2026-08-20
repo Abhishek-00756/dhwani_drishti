@@ -581,7 +581,6 @@ class MainActivity : AppCompatActivity() {
             pipeline
                 ?: return
 
-
         p.mode =
             when (p.mode) {
 
@@ -589,15 +588,10 @@ class MainActivity : AppCompatActivity() {
                     AppMode.NARRATED
 
                 AppMode.NARRATED ->
-                    AppMode.HYBRID
-
-                AppMode.HYBRID ->
                     AppMode.SOUNDSCAPE
             }
 
-
         refreshModeLabel()
-
 
         modeToggle.announceForAccessibility(
 
@@ -609,24 +603,14 @@ class MainActivity : AppCompatActivity() {
                         R.string.mode_soundscape_announcement
                     )
 
-
                 AppMode.NARRATED ->
 
                     getString(
                         R.string.mode_narrated_announcement
                     )
-
-
-                AppMode.HYBRID ->
-
-                    getString(
-                        R.string.mode_hybrid_announcement
-                    )
             }
         )
     }
-
-
     // =========================================================
     // REFRESH MODE LABEL
     // =========================================================
@@ -637,7 +621,6 @@ class MainActivity : AppCompatActivity() {
             pipeline
                 ?: return
 
-
         val label =
             when (p.mode) {
 
@@ -647,21 +630,12 @@ class MainActivity : AppCompatActivity() {
                         R.string.mode_soundscape
                     )
 
-
                 AppMode.NARRATED ->
 
                     getString(
                         R.string.mode_narrated
                     )
-
-
-                AppMode.HYBRID ->
-
-                    getString(
-                        R.string.mode_hybrid
-                    )
             }
-
 
         modeToggle.text =
             getString(
@@ -669,7 +643,6 @@ class MainActivity : AppCompatActivity() {
                 label
             )
     }
-
 
     // =========================================================
     // CALIBRATION
