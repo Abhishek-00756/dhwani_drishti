@@ -30,3 +30,4 @@ build/
 captures/
 .externalNativeBuild/
 .cxx/
+test_images/*.zip

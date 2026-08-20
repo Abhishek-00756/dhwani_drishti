@@ -1,0 +1,17 @@
+person
+bicycle
+car
+motorcycle
+truck
+stop sign
+bench
+dog
+chair
+bed
+laptop
+book
+bag
+door
+window
+stair
+pothole

@@ -2,6 +2,8 @@ package com.dhwanidrishti.app.ml
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.RectF
 import android.util.Log
 import com.dhwanidrishti.app.processing.RawDetection
@@ -11,134 +13,831 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
+import kotlin.math.max
+import kotlin.math.min
 
-class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite") {
+class ObjectDetector(
+    context: Context,
+    modelPath: String = MODEL_NAME
+) {
 
     companion object {
-        private const val TAG = "ObjectDetector"
-        private const val INPUT_SIZE = 320
-        private const val NUM_DETECTIONS = 20
-        private const val CONFIDENCE_THRESHOLD = 0.4f
 
-        // Standard COCO 80-class order (index 0 = person)
-        val COCO_LABELS = listOf(
-//            "person" , "laptop", "mouse"
-            "person","bicycle","car","motorcycle","airplane","bus","train","truck","boat",
-            "traffic light","fire hydrant","stop sign","parking meter","bench","bird","cat",
-            "dog","horse","sheep","cow","elephant","bear","zebra","giraffe","backpack",
-            "umbrella","handbag","tie","suitcase","frisbee","skis","snowboard","sports ball",
-            "kite","baseball bat","baseball glove","skateboard","surfboard","tennis racket",
-            "bottle","wine glass","cup","fork","knife","spoon","bowl","banana","apple",
-            "sandwich","orange","broccoli","carrot","hot dog","pizza","donut","cake","chair",
-            "couch","potted plant","bed","dining table","toilet","tv","laptop","mouse",
-            "remote","keyboard","cell phone","microwave","oven","toaster","sink",
-            "refrigerator","book","clock","vase","scissors","teddy bear","hair drier",
-            "toothbrush"
+        private const val TAG = "ObjectDetector"
+
+        /*
+         * ============================================================
+         * YOLO26m DHWANI DRISHTI MODEL
+         * ============================================================
+         *
+         * Input:
+         *      [1, 3, 512, 512]
+         *
+         * Output:
+         *      [1, 300, 6]
+         *
+         * Each detection:
+         *      [x1, y1, x2, y2, confidence, classId]
+         */
+
+        private const val MODEL_NAME =
+            "dhwani_drishti_17class.tflite"
+
+        private const val INPUT_SIZE = 512
+
+        private const val NUM_DETECTIONS = 300
+
+        private const val VALUES_PER_DETECTION = 6
+
+        /*
+         * Initial confidence threshold.
+         *
+         * We can tune this after testing on the phone.
+         */
+        private const val CONFIDENCE_THRESHOLD = 0.35f
+
+        /*
+         * ============================================================
+         * 17 MODEL CLASSES
+         * ============================================================
+         *
+         * DO NOT CHANGE THE ORDER.
+         *
+         * These IDs come directly from the trained model.
+         */
+
+        val LABELS = listOf(
+            "person",       // 0
+            "bicycle",      // 1
+            "car",          // 2
+            "motorcycle",   // 3
+            "truck",        // 4
+            "stop sign",    // 5
+            "bench",        // 6
+            "dog",          // 7
+            "chair",        // 8
+            "bed",          // 9
+            "laptop",       // 10
+            "book",         // 11
+            "bag",          // 12
+            "door",         // 13
+            "window",       // 14
+            "stair",        // 15
+            "pothole"       // 16
         )
     }
 
-    private var interpreter: Interpreter
+    private val interpreter: Interpreter
 
     init {
-        val model = loadModelFile(context, modelPath)
+
+        /*
+         * Load the model from:
+         *
+         * app/src/main/assets/
+         *
+         * dhwani_drishti_17class.tflite
+         */
+        val model = loadModelFile(
+            context,
+            modelPath
+        )
+
+        /*
+         * CPU configuration for the first integration.
+         *
+         * We will optimize inference speed after we confirm
+         * detection accuracy and correctness.
+         */
         val options = Interpreter.Options().apply {
             numThreads = 4
-            // GPU delegate intentionally NOT used here — see project notes on
-            // Mali gralloc instability. Revisit once detection is verified on CPU.
         }
-        interpreter = Interpreter(model, options)
-        Log.d(TAG, "Interpreter loaded: $modelPath")
-    }
 
-    private fun loadModelFile(context: Context, modelPath: String): MappedByteBuffer {
-        val assetFileDescriptor = context.assets.openFd(modelPath)
-        val inputStream = FileInputStream(assetFileDescriptor.fileDescriptor)
-        val fileChannel = inputStream.channel
-        val startOffset = assetFileDescriptor.startOffset
-        val declaredLength = assetFileDescriptor.declaredLength
-        return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
+        interpreter = Interpreter(
+            model,
+            options
+        )
+
+        Log.d(
+            TAG,
+            "========================================"
+        )
+
+        Log.d(
+            TAG,
+            "YOLO26m ObjectDetector initialized"
+        )
+
+        Log.d(
+            TAG,
+            "Model: $modelPath"
+        )
+
+        Log.d(
+            TAG,
+            "Input: [1, 3, 512, 512]"
+        )
+
+        Log.d(
+            TAG,
+            "Output: [1, 300, 6]"
+        )
+
+        Log.d(
+            TAG,
+            "Classes: ${LABELS.size}"
+        )
+
+        Log.d(
+            TAG,
+            "========================================"
+        )
+
+        /*
+         * Verify the actual model tensors.
+         */
+        Log.d(
+            TAG,
+            "Actual input shape: ${
+                interpreter
+                    .getInputTensor(0)
+                    .shape()
+                    .contentToString()
+            }"
+        )
+
+        Log.d(
+            TAG,
+            "Actual input type: ${
+                interpreter
+                    .getInputTensor(0)
+                    .dataType()
+            }"
+        )
+
+        Log.d(
+            TAG,
+            "Actual output shape: ${
+                interpreter
+                    .getOutputTensor(0)
+                    .shape()
+                    .contentToString()
+            }"
+        )
+
+        Log.d(
+            TAG,
+            "Actual output type: ${
+                interpreter
+                    .getOutputTensor(0)
+                    .dataType()
+            }"
+        )
     }
 
     /**
-     * Runs detection on a single frame. Bitmap can be any size — it's resized
-     * internally to 320x320 to match the model's fixed input. Returns
-     * [RawDetection]s with boundingBox normalized 0..1 relative to the
-     * original frame, ready for [com.dhwanidrishti.app.processing.fuseDetectionsWithDepth].
+     * Loads the .tflite model from app/src/main/assets.
      */
-    fun detect(bitmap: Bitmap): List<RawDetection> {
-        val inputBuffer = preprocess(bitmap)
+    private fun loadModelFile(
+        context: Context,
+        modelPath: String
+    ): MappedByteBuffer {
 
-        // Output shape confirmed via inspect_yolo.py: [1, 20, 6]
-        // Each row: [x1, y1, x2, y2, confidence, classId]
-        val output = Array(1) { Array(NUM_DETECTIONS) { FloatArray(6) } }
-        interpreter.run(inputBuffer, output)
+        val assetFileDescriptor =
+            context.assets.openFd(modelPath)
 
-        // One-time diagnostic: log the raw first row so we can confirm whether
-        // coordinates are normalized (0..1) or pixel-space (0..320).
-        Log.d(TAG, "raw row0: ${output[0][0].joinToString()}")
+        val inputStream =
+            FileInputStream(
+                assetFileDescriptor.fileDescriptor
+            )
 
-        val detections = mutableListOf<RawDetection>()
-        for (i in 0 until NUM_DETECTIONS) {
-            val row = output[0][i]
-            val confidence = row[4]
-            if (confidence < CONFIDENCE_THRESHOLD) continue
+        val fileChannel =
+            inputStream.channel
 
-            val classId = row[5].toInt()
-            val label = COCO_LABELS.getOrElse(classId) { "unknown" }
-            val box = normalizeBox(row[0], row[1], row[2], row[3])
+        val startOffset =
+            assetFileDescriptor.startOffset
+
+        val declaredLength =
+            assetFileDescriptor.declaredLength
+
+        return fileChannel.map(
+            FileChannel.MapMode.READ_ONLY,
+            startOffset,
+            declaredLength
+        )
+    }
+
+    /**
+     * Runs YOLO26m detection on a camera frame.
+     *
+     * Input:
+     *      Any Bitmap size.
+     *
+     * Processing:
+     *      Letterbox -> 512x512 -> NCHW float32
+     *
+     * Output:
+     *      RawDetection objects with normalized
+     *      bounding boxes relative to the original
+     *      camera frame.
+     */
+    fun detect(
+        bitmap: Bitmap
+    ): List<RawDetection> {
+
+        if (
+            bitmap.width <= 0 ||
+            bitmap.height <= 0
+        ) {
+            return emptyList()
+        }
+
+        /*
+         * ============================================================
+         * STEP 1
+         * LETTERBOX IMAGE
+         * ============================================================
+         *
+         * Preserve the camera image aspect ratio.
+         *
+         * We do NOT simply stretch the image to 512x512.
+         */
+        val letterboxResult =
+            letterbox(bitmap)
+
+        /*
+         * ============================================================
+         * STEP 2
+         * PREPROCESS
+         * ============================================================
+         *
+         * Model requires:
+         *
+         * [1, 3, 512, 512]
+         *
+         * Therefore:
+         *
+         * R plane
+         * G plane
+         * B plane
+         *
+         * rather than:
+         *
+         * RGB RGB RGB...
+         */
+        val inputBuffer =
+            preprocess(
+                letterboxResult.bitmap
+            )
+
+        /*
+         * ============================================================
+         * STEP 3
+         * OUTPUT BUFFER
+         * ============================================================
+         *
+         * Model output:
+         *
+         * [1, 300, 6]
+         */
+        val output =
+            Array(1) {
+                Array(NUM_DETECTIONS) {
+                    FloatArray(
+                        VALUES_PER_DETECTION
+                    )
+                }
+            }
+
+        /*
+         * ============================================================
+         * STEP 4
+         * RUN INFERENCE
+         * ============================================================
+         */
+        try {
+
+            interpreter.run(
+                inputBuffer,
+                output
+            )
+
+        } catch (e: Exception) {
+
+            Log.e(
+                TAG,
+                "YOLO inference failed",
+                e
+            )
+
+            return emptyList()
+        }
+
+        /*
+         * Diagnostic output.
+         */
+        Log.d(
+            TAG,
+            "Raw output row 0: ${
+                output[0][0].joinToString()
+            }"
+        )
+
+        val detections =
+            mutableListOf<RawDetection>()
+
+        /*
+         * ============================================================
+         * STEP 5
+         * DECODE DETECTIONS
+         * ============================================================
+         */
+        for (
+        i in 0 until NUM_DETECTIONS
+        ) {
+
+            val row =
+                output[0][i]
+
+            val x1 =
+                row[0]
+
+            val y1 =
+                row[1]
+
+            val x2 =
+                row[2]
+
+            val y2 =
+                row[3]
+
+            val confidence =
+                row[4]
+
+            val classId =
+                row[5].toInt()
+
+            /*
+             * Confidence filter.
+             */
+            if (
+                confidence <
+                CONFIDENCE_THRESHOLD
+            ) {
+                continue
+            }
+
+            /*
+             * Protect against invalid class IDs.
+             */
+            if (
+                classId !in LABELS.indices
+            ) {
+
+                Log.w(
+                    TAG,
+                    "Invalid class ID: $classId"
+                )
+
+                continue
+            }
+
+            /*
+             * Convert model coordinates
+             * back to the original camera frame.
+             */
+            val boundingBox =
+                mapBoxToOriginalFrame(
+                    x1 = x1,
+                    y1 = y1,
+                    x2 = x2,
+                    y2 = y2,
+                    letterbox = letterboxResult
+                )
+
+            /*
+             * Ignore invalid boxes.
+             */
+            if (
+                boundingBox.width() <= 0f ||
+                boundingBox.height() <= 0f
+            ) {
+                continue
+            }
+
+            val label =
+                LABELS[classId]
 
             detections.add(
                 RawDetection(
                     label = label,
-                    boundingBox = box,
-                    confidence = confidence,
+                    boundingBox = boundingBox,
+                    confidence = confidence
                 )
             )
         }
 
-        if (detections.isNotEmpty()) {
-            Log.d(TAG, "Detections: " + detections.joinToString {
-                "${it.label} ${"%.2f".format(it.confidence)}"
-            })
+        /*
+         * ============================================================
+         * LOG DETECTIONS
+         * ============================================================
+         */
+        if (
+            detections.isNotEmpty()
+        ) {
+
+            Log.d(
+                TAG,
+                "========================================"
+            )
+
+            Log.d(
+                TAG,
+                "DETECTIONS: ${detections.size}"
+            )
+
+            detections.forEach { detection ->
+
+                Log.d(
+                    TAG,
+                    "${detection.label} " +
+                            "confidence=${
+                                "%.2f".format(
+                                    detection.confidence
+                                )
+                            } " +
+                            "box=${
+                                detection.boundingBox
+                            }"
+                )
+            }
+
+            Log.d(
+                TAG,
+                "========================================"
+            )
+
+        } else {
+
+            Log.d(
+                TAG,
+                "No detections above threshold"
+            )
         }
 
         return detections
     }
 
     /**
-     * Handles both possible coordinate conventions from the export:
-     * - already normalized (0f..1f), or
-     * - pixel-space relative to the 320x320 input.
-     * Detected automatically from the raw magnitude — no guessing needed at call sites.
+     * ================================================================
+     * LETTERBOX
+     * ================================================================
+     *
+     * Resizes the original image while preserving its aspect ratio.
+     *
+     * The remaining area is filled with YOLO-style gray padding.
      */
-    private fun normalizeBox(x1: Float, y1: Float, x2: Float, y2: Float): RectF {
-        val looksNormalized = x1 <= 1.5f && y1 <= 1.5f && x2 <= 1.5f && y2 <= 1.5f
-        return if (looksNormalized) {
-            RectF(x1, y1, x2, y2)
-        } else {
-            RectF(x1 / INPUT_SIZE, y1 / INPUT_SIZE, x2 / INPUT_SIZE, y2 / INPUT_SIZE)
-        }
+    private fun letterbox(
+        bitmap: Bitmap
+    ): LetterboxResult {
+
+        val originalWidth =
+            bitmap.width.toFloat()
+
+        val originalHeight =
+            bitmap.height.toFloat()
+
+        /*
+         * Calculate scale while preserving aspect ratio.
+         */
+        val scale =
+            min(
+                INPUT_SIZE / originalWidth,
+                INPUT_SIZE / originalHeight
+            )
+
+        val resizedWidth =
+            max(
+                1,
+                (originalWidth * scale).toInt()
+            )
+
+        val resizedHeight =
+            max(
+                1,
+                (originalHeight * scale).toInt()
+            )
+
+        val resizedBitmap =
+            Bitmap.createScaledBitmap(
+                bitmap,
+                resizedWidth,
+                resizedHeight,
+                true
+            )
+
+        /*
+         * Create 512x512 output.
+         */
+        val outputBitmap =
+            Bitmap.createBitmap(
+                INPUT_SIZE,
+                INPUT_SIZE,
+                Bitmap.Config.ARGB_8888
+            )
+
+        val canvas =
+            Canvas(outputBitmap)
+
+        /*
+         * YOLO-style padding.
+         */
+        canvas.drawColor(
+            Color.rgb(
+                114,
+                114,
+                114
+            )
+        )
+
+        /*
+         * Center resized image.
+         */
+        val padX =
+            (INPUT_SIZE - resizedWidth) / 2f
+
+        val padY =
+            (INPUT_SIZE - resizedHeight) / 2f
+
+        canvas.drawBitmap(
+            resizedBitmap,
+            padX,
+            padY,
+            null
+        )
+
+        return LetterboxResult(
+            bitmap = outputBitmap,
+            scale = scale,
+            padX = padX,
+            padY = padY,
+            originalWidth = bitmap.width,
+            originalHeight = bitmap.height
+        )
     }
 
-    private fun preprocess(bitmap: Bitmap): ByteBuffer {
-        val resized = Bitmap.createScaledBitmap(bitmap, INPUT_SIZE, INPUT_SIZE, true)
-        val buffer = ByteBuffer
-            .allocateDirect(1 * INPUT_SIZE * INPUT_SIZE * 3 * 4)
-            .order(ByteOrder.nativeOrder())
+    /**
+     * Stores information required to map bounding boxes
+     * from the 512x512 letterboxed image back to the
+     * original camera image.
+     */
+    private data class LetterboxResult(
 
-        val pixels = IntArray(INPUT_SIZE * INPUT_SIZE)
-        resized.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE)
+        val bitmap: Bitmap,
 
+        val scale: Float,
+
+        val padX: Float,
+
+        val padY: Float,
+
+        val originalWidth: Int,
+
+        val originalHeight: Int
+    )
+
+    /**
+     * ================================================================
+     * PREPROCESS
+     * ================================================================
+     *
+     * Converts:
+     *
+     * Bitmap
+     *
+     * into:
+     *
+     * [1, 3, 512, 512]
+     *
+     * float32 tensor.
+     *
+     * Values:
+     *
+     * 0..255
+     *
+     * become:
+     *
+     * 0..1
+     */
+    private fun preprocess(
+        bitmap: Bitmap
+    ): ByteBuffer {
+
+        val pixelCount =
+            INPUT_SIZE * INPUT_SIZE
+
+        /*
+         * 3 channels
+         * 4 bytes per float
+         */
+        val buffer =
+            ByteBuffer
+                .allocateDirect(
+                    pixelCount *
+                            3 *
+                            4
+                )
+                .order(
+                    ByteOrder.nativeOrder()
+                )
+
+        val pixels =
+            IntArray(
+                pixelCount
+            )
+
+        bitmap.getPixels(
+            pixels,
+            0,
+            INPUT_SIZE,
+            0,
+            0,
+            INPUT_SIZE,
+            INPUT_SIZE
+        )
+
+        /*
+         * ============================================================
+         * RED CHANNEL
+         * ============================================================
+         */
         for (pixel in pixels) {
-            buffer.putFloat(((pixel shr 16) and 0xFF) / 255.0f) // R
-            buffer.putFloat(((pixel shr 8) and 0xFF) / 255.0f)  // G
-            buffer.putFloat((pixel and 0xFF) / 255.0f)          // B
+
+            buffer.putFloat(
+                ((pixel shr 16) and 0xFF) /
+                        255.0f
+            )
         }
+
+        /*
+         * ============================================================
+         * GREEN CHANNEL
+         * ============================================================
+         */
+        for (pixel in pixels) {
+
+            buffer.putFloat(
+                ((pixel shr 8) and 0xFF) /
+                        255.0f
+            )
+        }
+
+        /*
+         * ============================================================
+         * BLUE CHANNEL
+         * ============================================================
+         */
+        for (pixel in pixels) {
+
+            buffer.putFloat(
+                (pixel and 0xFF) /
+                        255.0f
+            )
+        }
+
         buffer.rewind()
+
         return buffer
     }
 
+    /**
+     * ================================================================
+     * MAP BOUNDING BOX
+     * ================================================================
+     *
+     * YOLO gives coordinates relative to the 512x512
+     * letterboxed model input.
+     *
+     * We convert them back to normalized coordinates
+     * relative to the ORIGINAL camera frame.
+     *
+     * Result:
+     *
+     * x1 = 0..1
+     * y1 = 0..1
+     * x2 = 0..1
+     * y2 = 0..1
+     */
+    private fun mapBoxToOriginalFrame(
+        x1: Float,
+        y1: Float,
+        x2: Float,
+        y2: Float,
+        letterbox: LetterboxResult
+    ): RectF {
+
+        /*
+         * Remove letterbox padding.
+         */
+        val originalX1 =
+            (x1 - letterbox.padX) /
+                    letterbox.scale
+
+        val originalY1 =
+            (y1 - letterbox.padY) /
+                    letterbox.scale
+
+        val originalX2 =
+            (x2 - letterbox.padX) /
+                    letterbox.scale
+
+        val originalY2 =
+            (y2 - letterbox.padY) /
+                    letterbox.scale
+
+        /*
+         * Convert to normalized coordinates.
+         */
+        val normalizedX1 =
+            (
+                    originalX1 /
+                            letterbox.originalWidth
+                    ).coerceIn(
+                    0f,
+                    1f
+                )
+
+        val normalizedY1 =
+            (
+                    originalY1 /
+                            letterbox.originalHeight
+                    ).coerceIn(
+                    0f,
+                    1f
+                )
+
+        val normalizedX2 =
+            (
+                    originalX2 /
+                            letterbox.originalWidth
+                    ).coerceIn(
+                    0f,
+                    1f
+                )
+
+        val normalizedY2 =
+            (
+                    originalY2 /
+                            letterbox.originalHeight
+                    ).coerceIn(
+                    0f,
+                    1f
+                )
+
+        /*
+         * Ensure correct ordering.
+         */
+        return RectF(
+            min(
+                normalizedX1,
+                normalizedX2
+            ),
+            min(
+                normalizedY1,
+                normalizedY2
+            ),
+            max(
+                normalizedX1,
+                normalizedX2
+            ),
+            max(
+                normalizedY1,
+                normalizedY2
+            )
+        )
+    }
+
+    /**
+     * Releases the TFLite interpreter.
+     */
     fun close() {
-        interpreter.close()
+
+        try {
+
+            interpreter.close()
+
+            Log.d(
+                TAG,
+                "YOLO26m interpreter closed"
+            )
+
+        } catch (e: Exception) {
+
+            Log.e(
+                TAG,
+                "Error closing interpreter",
+                e
+            )
+        }
     }
 }
