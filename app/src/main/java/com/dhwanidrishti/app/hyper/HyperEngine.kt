@@ -12,15 +12,40 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Hyper mode is independent of local YOLO/MiDaS inference.
- * Camera frames are buffered, but Gemini is contacted only when
- * the user explicitly asks a visual question.
+ * Hyper is an on-demand visual reasoning mode.
+ *
+ * It is deliberately independent from Soundscape and Narrated:
+ *
+ * - no YOLO
+ * - no MiDaS
+ * - no object tracking
+ * - no continuous scene processing
+ *
+ * The latest camera frame is buffered only while Hyper mode is active.
+ * Gemini is contacted only after the user asks a visual question.
  */
 class HyperEngine(
     private val announcer: AnnouncementManager
 ) {
     companion object {
         private const val TAG = "HYPER_MODE"
+
+        private const val CONTEXT = """
+            You are Dhwani Hyper, an assistive visual reasoning assistant
+            for a visually impaired user.
+
+            Use the supplied camera frame as the primary source of truth.
+            Describe only information that can actually be determined from
+            the image. Prioritize objects, people, obstacles, signs, text,
+            spatial position, and obvious hazards when relevant to the user's
+            question.
+
+            Do not invent objects or details. Do not claim exact physical
+            distances from a single image. When position is relevant, use
+            simple spoken descriptions such as left, center, or right.
+
+            Keep answers concise, natural, and suitable for text-to-speech.
+        """.trimIndent()
     }
 
     private val gemini = GeminiVisionEngine()
@@ -28,12 +53,26 @@ class HyperEngine(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val requestInFlight = AtomicBoolean(false)
 
+    /**
+     * Stores the newest frame for Hyper queries.
+     * The buffer owns its copy, so the normal camera/inference pipeline
+     * remains free to manage its own bitmap lifecycle.
+     */
     fun submitFrame(bitmap: Bitmap) {
         frameBuffer.submit(bitmap)
     }
 
+    /**
+     * Sends exactly one recent frame plus the user's question to Gemini.
+     * No continuous Gemini inference occurs here.
+     */
     fun ask(question: String) {
-        if (question.isBlank()) return
+        val cleanQuestion = question.trim()
+
+        if (cleanQuestion.isBlank()) {
+            return
+        }
+
         if (!requestInFlight.compareAndSet(false, true)) {
             announcer.speak("Please wait for my previous answer.")
             return
@@ -42,14 +81,30 @@ class HyperEngine(
         val frame = frameBuffer.snapshot()
         if (frame == null) {
             requestInFlight.set(false)
-            announcer.speak("I don't have a camera frame yet.")
+            announcer.speak("I don't have a recent camera frame yet.")
             return
         }
 
         scope.launch {
             try {
-                Log.d(TAG, "Sending one frame to Gemini for: $question")
-                val result = gemini.analyzeImage(frame, question)
+                val contextualQuestion = """
+                    $CONTEXT
+
+                    User's question:
+                    $cleanQuestion
+                """.trimIndent()
+
+                Log.d(
+                    TAG,
+                    "Sending one recent frame to Gemini for: $cleanQuestion"
+                )
+
+                val result =
+                    gemini.analyzeImage(
+                        frame,
+                        contextualQuestion
+                    )
+
                 result.onSuccess { answer ->
                     announcer.speak(answer)
                 }.onFailure { error ->
@@ -57,7 +112,9 @@ class HyperEngine(
                     announcer.speak("I couldn't analyze the scene right now.")
                 }
             } finally {
-                if (!frame.isRecycled) frame.recycle()
+                if (!frame.isRecycled) {
+                    frame.recycle()
+                }
                 requestInFlight.set(false)
             }
         }
