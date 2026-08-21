@@ -15,20 +15,28 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 
+/**
+ * Small REST client used only by Hyper for on-demand visual questions.
+ *
+ * It is intentionally independent from the Soundscape and Narrated
+ * perception pipelines.
+ */
 class GeminiVisionEngine {
 
     companion object {
         private const val TAG = "GeminiVisionEngine"
 
-        /*
-         * We use Gemini's generateContent REST endpoint.
-         *
-         * Keep the model name in one place so it is easy to change later.
+        /**
+         * Gemini 2.5 Flash supports multimodal image understanding.
+         * Keep the model in one place so it is easy to update later.
          */
         private const val MODEL = "gemini-2.5-flash"
 
+        /**
+         * Use the stable Gemini API version for generateContent.
+         */
         private const val BASE_URL =
-            "https://generativelanguage.googleapis.com/v1beta/models/"
+            "https://generativelanguage.googleapis.com/v1/models/"
 
         private const val JPEG_QUALITY = 80
     }
@@ -41,11 +49,10 @@ class GeminiVisionEngine {
             .build()
 
     /**
-     * Sends one camera frame to Gemini and asks it to identify objects.
+     * Sends one camera frame to Gemini and asks the supplied question.
      *
-     * This function does NOT run continuously.
-     * It is intended to be called only when the user asks something
-     * that needs Gemini's visual understanding.
+     * This function is called only when Hyper receives an explicit
+     * visual question. It does not run continuously.
      */
     suspend fun analyzeImage(
         bitmap: Bitmap,
@@ -53,14 +60,13 @@ class GeminiVisionEngine {
     ): Result<String> = withContext(Dispatchers.IO) {
 
         try {
-
-            val apiKey = BuildConfig.GEMINI_API_KEY
+            val apiKey = BuildConfig.GEMINI_API_KEY.trim()
 
             if (apiKey.isBlank()) {
                 return@withContext Result.failure(
                     IllegalStateException(
                         "GEMINI_API_KEY is missing. " +
-                                "Check local.properties."
+                                "Add it to local.properties and sync Gradle."
                     )
                 )
             }
@@ -71,20 +77,17 @@ class GeminiVisionEngine {
 
             Log.d(
                 TAG,
-                "Image encoded successfully. " +
-                        "Base64 size=${imageBase64.length}"
+                "Image encoded successfully. Base64 size=${imageBase64.length}"
             )
-
-            val prompt = buildPrompt(userQuestion)
 
             val requestJson =
                 buildRequestJson(
-                    prompt = prompt,
+                    userQuestion = userQuestion,
                     imageBase64 = imageBase64
                 )
 
             val url =
-                "$BASE_URL$MODEL:generateContent?key=$apiKey"
+                "$BASE_URL$MODEL:generateContent"
 
             val mediaType =
                 "application/json; charset=utf-8".toMediaType()
@@ -102,9 +105,16 @@ class GeminiVisionEngine {
                         "Content-Type",
                         "application/json"
                     )
+                    .addHeader(
+                        "x-goog-api-key",
+                        apiKey
+                    )
                     .build()
 
-            Log.d(TAG, "Sending request to Gemini")
+            Log.d(
+                TAG,
+                "Sending Gemini request: model=$MODEL apiVersion=v1"
+            )
 
             client.newCall(request).execute().use { response ->
 
@@ -120,13 +130,13 @@ class GeminiVisionEngine {
 
                     Log.e(
                         TAG,
-                        "Gemini request failed: $responseBody"
+                        "Gemini request failed (${response.code}): $responseBody"
                     )
 
                     return@withContext Result.failure(
                         RuntimeException(
-                            "Gemini request failed " +
-                                    "(${response.code})"
+                            "Gemini request failed (${response.code}): " +
+                                    extractApiError(responseBody)
                         )
                     )
                 }
@@ -138,7 +148,7 @@ class GeminiVisionEngine {
 
                     Log.e(
                         TAG,
-                        "Gemini returned an empty response"
+                        "Gemini returned an empty response: $responseBody"
                     )
 
                     return@withContext Result.failure(
@@ -148,10 +158,7 @@ class GeminiVisionEngine {
                     )
                 }
 
-                Log.d(
-                    TAG,
-                    "Gemini answer: $answer"
-                )
+                Log.d(TAG, "Gemini answer: $answer")
 
                 Result.success(answer)
             }
@@ -184,114 +191,64 @@ class GeminiVisionEngine {
             outputStream
         )
 
-        val bytes =
-            outputStream.toByteArray()
-
         return Base64.encodeToString(
-            bytes,
+            outputStream.toByteArray(),
             Base64.NO_WRAP
         )
     }
 
     /**
-     * Prompt specifically designed for Dhwani Drishti.
-     *
-     * Gemini is being used for visual understanding here,
-     * not for distance measurement.
-     */
-    private fun buildPrompt(
-        userQuestion: String
-    ): String {
-
-        return """
-            You are the visual understanding component of
-            an assistive Android application called Dhwani Drishti.
-
-            Analyze the provided camera image carefully.
-
-            User question:
-            "$userQuestion"
-
-            Instructions:
-
-            1. Identify objects that are clearly visible.
-            2. Pay particular attention to the object requested
-               by the user.
-            3. Determine the approximate horizontal position
-               of the requested object:
-               LEFT, CENTER, or RIGHT.
-            4. Do not invent objects that are not visible.
-            5. Do not claim an exact physical distance.
-            6. If the requested object is not visible, clearly
-               say that it was not found.
-            7. Keep the answer concise because the response
-               will be spoken aloud by text-to-speech.
-
-            For a location question, answer in this style:
-
-            "Door is on your left."
-
-            or:
-
-            "I cannot see a door."
-
-            User question:
-            "$userQuestion"
-        """.trimIndent()
-    }
-
-    /**
-     * Builds the Gemini generateContent request.
+     * Builds the multimodal generateContent request.
      */
     private fun buildRequestJson(
-        prompt: String,
+        userQuestion: String,
         imageBase64: String
     ): JSONObject {
 
-        val inlineData =
-            JSONObject()
-                .put("mime_type", "image/jpeg")
-                .put("data", imageBase64)
-
         val imagePart =
             JSONObject()
-                .put("inline_data", inlineData)
+                .put(
+                    "inline_data",
+                    JSONObject()
+                        .put("mime_type", "image/jpeg")
+                        .put("data", imageBase64)
+                )
 
         val textPart =
             JSONObject()
-                .put("text", prompt)
-
-        val parts =
-            JSONArray()
-                .put(textPart)
-                .put(imagePart)
+                .put(
+                    "text",
+                    userQuestion.trim()
+                )
 
         val content =
             JSONObject()
-                .put("parts", parts)
+                .put(
+                    "role",
+                    "user"
+                )
+                .put(
+                    "parts",
+                    JSONArray()
+                        .put(textPart)
+                        .put(imagePart)
+                )
 
         return JSONObject()
             .put(
                 "contents",
-                JSONArray()
-                    .put(content)
+                JSONArray().put(content)
             )
     }
 
     /**
-     * Extracts:
-     *
-     * candidates[0]
-     *     -> content
-     *         -> parts[0]
-     *             -> text
+     * Extracts the first text response from candidates[0].content.parts.
      */
     private fun extractTextFromResponse(
         responseBody: String
     ): String {
 
-        val root =
-            JSONObject(responseBody)
+        val root = JSONObject(responseBody)
 
         val candidates =
             root.optJSONArray("candidates")
@@ -313,25 +270,48 @@ class GeminiVisionEngine {
             content.optJSONArray("parts")
                 ?: return ""
 
-        val result =
-            StringBuilder()
+        val result = StringBuilder()
 
         for (i in 0 until parts.length()) {
-
-            val part =
-                parts.optJSONObject(i)
-                    ?: continue
-
-            val text =
-                part.optString("text", "")
+            val part = parts.optJSONObject(i) ?: continue
+            val text = part.optString("text", "")
 
             if (text.isNotBlank()) {
-                result.append(text)
+                if (result.isNotEmpty()) {
+                    result.append(' ')
+                }
+                result.append(text.trim())
             }
         }
 
-        return result
-            .toString()
-            .trim()
+        return result.toString().trim()
+    }
+
+    /**
+     * Extracts Google's useful error message without exposing the API key.
+     */
+    private fun extractApiError(
+        responseBody: String
+    ): String {
+
+        return try {
+            val root = JSONObject(responseBody)
+            val error = root.optJSONObject("error")
+
+            if (error != null) {
+                val message = error.optString("message", "Unknown API error")
+                val status = error.optString("status", "")
+
+                if (status.isBlank()) {
+                    message
+                } else {
+                    "$status: $message"
+                }
+            } else {
+                "Unknown API error"
+            }
+        } catch (_: Exception) {
+            "Unable to parse Gemini error response"
+        }
     }
 }
