@@ -3,15 +3,17 @@ package com.dhwanidrishti.app.pipeline
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
+
 import com.dhwanidrishti.app.audio.SonificationEngine
+import com.dhwanidrishti.app.audio.TextReader
 import com.dhwanidrishti.app.calibration.CalibrationManager
 import com.dhwanidrishti.app.ml.DepthEstimator
 import com.dhwanidrishti.app.processing.ZoneDistances
 import com.dhwanidrishti.app.processing.ZoneProcessor
+
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicReference
-import com.dhwanidrishti.app.audio.TextReader
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 
 class DhwaniPipeline(
@@ -19,6 +21,10 @@ class DhwaniPipeline(
     private val onStats: (PipelineStats) -> Unit = {},
     private val onCalibrationSample: (CalibrationPoint) -> Unit = {},
 ) {
+
+    companion object {
+        private const val TAG = "DHWANI_PIPELINE"
+    }
 
     // =========================================================
     // DEPTH ESTIMATOR
@@ -37,9 +43,19 @@ class DhwaniPipeline(
 
 
     // =========================================================
-    // SOUNDSCAPE
+    // SOUNDSCAPE ENGINE
     // =========================================================
 
+    /**
+     * Soundscape is responsible only for spatial audio.
+     *
+     * It does NOT perform:
+     *
+     * - YOLO detection
+     * - object tracking
+     * - risk evaluation
+     * - narrated announcements
+     */
     private val sonification =
         SonificationEngine()
 
@@ -52,7 +68,6 @@ class DhwaniPipeline(
      * Camera continuously submits frames here.
      *
      * Only the newest frame is kept.
-     * Old frames are discarded.
      */
     private val latestFrame =
         AtomicReference<Bitmap?>(null)
@@ -62,6 +77,13 @@ class DhwaniPipeline(
     // INFERENCE THREAD
     // =========================================================
 
+    /**
+     * One worker processes the latest camera frame.
+     *
+     * Soundscape and Narrated use the same depth inference
+     * worker, but their processing branches are completely
+     * separated.
+     */
     private val inferenceExecutor =
         Executors.newSingleThreadExecutor()
 
@@ -118,20 +140,97 @@ class DhwaniPipeline(
     // APP MODE
     // =========================================================
 
+    /**
+     * Current application mode.
+     *
+     * Only two modes exist:
+     *
+     * SOUNDSCAPE
+     * NARRATED
+     */
     @Volatile
     var mode: AppMode =
         AppMode.SOUNDSCAPE
+        set(value) {
+
+            if (field == value) {
+                return
+            }
+
+            val oldMode =
+                field
+
+            field = value
+
+            Log.d(
+                TAG,
+                "========================================"
+            )
+
+            Log.d(
+                TAG,
+                "MODE CHANGE: $oldMode -> $value"
+            )
+
+            when (value) {
+
+                AppMode.SOUNDSCAPE -> {
+
+                    Log.d(
+                        TAG,
+                        "SOUNDSCAPE MODE ACTIVATED"
+                    )
+
+                    /**
+                     * Soundscape is active.
+                     *
+                     * Narrated object processing will stop
+                     * automatically in inferenceLoop().
+                     */
+                    sonification.muted =
+                        false
+                }
+
+                AppMode.NARRATED -> {
+
+                    Log.d(
+                        TAG,
+                        "NARRATED MODE ACTIVATED"
+                    )
+
+                    /**
+                     * Narrated mode does not produce the
+                     * continuous soundscape audio.
+                     */
+                    sonification.muted =
+                        true
+                }
+            }
+
+            Log.d(
+                TAG,
+                "========================================"
+            )
+        }
 
 
     // =========================================================
-    // MODE B
+    // MODE B / NARRATED ENGINE
     // =========================================================
 
     /**
      * Mode B is loaded lazily.
      *
-     * This prevents YOLO + TTS from loading
-     * when the user only uses Soundscape mode.
+     * This prevents YOLO + TTS from loading when the user
+     * only uses Soundscape mode.
+     *
+     * Once created, it remains available so switching:
+     *
+     * SOUNDSCAPE
+     *      ↓
+     * NARRATED
+     *
+     * does not unnecessarily recreate the detector/tracker.
      */
     private var modeB:
             ModeBEngine? = null
@@ -143,10 +242,31 @@ class DhwaniPipeline(
 
     init {
 
-        // Start continuous soundscape engine.
+        Log.d(
+            TAG,
+            "========================================"
+        )
+
+        Log.d(
+            TAG,
+            "DhwaniPipeline initialized"
+        )
+
+        Log.d(
+            TAG,
+            "Initial mode = $mode"
+        )
+
+        /**
+         * Start the soundscape engine.
+         *
+         * It can be muted while Narrated mode is active.
+         */
         sonification.start()
 
-        // Start inference worker.
+        /**
+         * Start the single inference worker.
+         */
         inferenceExecutor.execute {
             inferenceLoop()
         }
@@ -160,7 +280,7 @@ class DhwaniPipeline(
     /**
      * Called by CameraController.
      *
-     * The newest frame replaces the previous one.
+     * Only the latest frame is retained.
      */
     fun submitFrame(
         bitmap: Bitmap
@@ -177,10 +297,15 @@ class DhwaniPipeline(
     // =========================================================
 
     /**
-     * Request the next processed frame to be used
-     * as the NEAR calibration sample.
+     * Request the next processed frame to be used as the
+     * NEAR calibration sample.
      */
     fun recordCalibrationNear() {
+
+        Log.d(
+            TAG,
+            "Calibration NEAR requested"
+        )
 
         pendingCalibrationPoint =
             CalibrationPoint.NEAR
@@ -188,10 +313,15 @@ class DhwaniPipeline(
 
 
     /**
-     * Request the next processed frame to be used
-     * as the FAR calibration sample.
+     * Request the next processed frame to be used as the
+     * FAR calibration sample.
      */
     fun recordCalibrationFar() {
+
+        Log.d(
+            TAG,
+            "Calibration FAR requested"
+        )
 
         pendingCalibrationPoint =
             CalibrationPoint.FAR
@@ -200,6 +330,8 @@ class DhwaniPipeline(
 
     // =========================================================
     // VOICE QUESTION
+    //
+    // "HEY DHWANI, WHAT'S IN FRONT OF ME?"
     // =========================================================
 
     /**
@@ -207,12 +339,16 @@ class DhwaniPipeline(
      *
      * "Hey Dhwani, what's in front of me?"
      *
-     * This works independently of the current mode.
+     * This uses the latest tracked Narrated-mode scene.
      *
-     * If Mode B has not been initialized yet,
-     * it will be created here.
+     * If Mode B has not been initialized yet, it is created.
      */
     fun answerWhatIsInFront() {
+
+        Log.d(
+            TAG,
+            "Voice request: WHAT IS IN FRONT"
+        )
 
         modeBEngine()
             .answerWhatIsInFront()
@@ -220,33 +356,26 @@ class DhwaniPipeline(
 
 
     // =========================================================
-    // VOICE QUESTION:
+    // VOICE QUESTION
     //
     // "HEY DHWANI, WHERE IS THE DOOR?"
     // =========================================================
 
     /**
-     * Answers an object-location question.
+     * Answers object-location questions.
      *
      * Examples:
      *
      * "Where is the door?"
-     * -> "Door is on your left."
-     *
-     * "Where is the person?"
-     * -> "Person is in front of you."
-     *
      * "Where is the laptop?"
-     * -> "Laptop is on your right."
-     *
-     * Mode B searches the latest tracked scene.
+     * "Where is the person?"
      */
     fun answerWhereIs(
         objectName: String
     ) {
 
         Log.d(
-            "DHWANI_PIPELINE",
+            TAG,
             "Location request: [$objectName]"
         )
 
@@ -258,17 +387,13 @@ class DhwaniPipeline(
 
 
     // =========================================================
-    // VOICE QUESTION:
+    // VOICE QUESTION
     //
     // "HEY DHWANI, READ"
     // =========================================================
 
     /**
-     * Reads text visible in front of the camera.
-     *
-     * This is triggered by:
-     *
-     * "Hey Dhwani, read"
+     * Schedules OCR on the next camera frame.
      */
     fun answerRead() {
 
@@ -277,7 +402,9 @@ class DhwaniPipeline(
             "READ REQUEST RECEIVED"
         )
 
-        pendingRead.set(true)
+        pendingRead.set(
+            true
+        )
 
         Log.d(
             "DHWANI_OCR",
@@ -287,16 +414,16 @@ class DhwaniPipeline(
 
 
     // =========================================================
-    // INFERENCE LOOP
+    // MAIN INFERENCE LOOP
     // =========================================================
 
     private fun inferenceLoop() {
 
         while (running) {
 
-            // -------------------------------------------------
+            // =================================================
             // GET LATEST CAMERA FRAME
-            // -------------------------------------------------
+            // =================================================
 
             val frame =
                 latestFrame.getAndSet(null)
@@ -307,7 +434,12 @@ class DhwaniPipeline(
             // VOICE READ -> OCR
             // =================================================
 
-            if (pendingRead.compareAndSet(true, false)) {
+            if (
+                pendingRead.compareAndSet(
+                    true,
+                    false
+                )
+            ) {
 
                 Log.d(
                     "DHWANI_OCR",
@@ -376,7 +508,7 @@ class DhwaniPipeline(
 
 
             // =================================================
-            // DEPTH
+            // DEPTH ESTIMATION
             // =================================================
 
             val tStart =
@@ -384,22 +516,35 @@ class DhwaniPipeline(
 
 
             // -------------------------------------------------
-            // MiDaS DEPTH
+            // MiDaS
             // -------------------------------------------------
 
             val rawDepth =
-                depthEstimator.runInference(
-                    frame
-                )
+                try {
+
+                    depthEstimator.runInference(
+                        frame
+                    )
+
+                } catch (e: Exception) {
+
+                    Log.e(
+                        TAG,
+                        "Depth inference failed",
+                        e
+                    )
+
+                    continue
+                }
 
 
             val tModel =
                 System.nanoTime()
 
 
-            // -------------------------------------------------
+            // =================================================
             // CALIBRATION
-            // -------------------------------------------------
+            // =================================================
 
             pendingCalibrationPoint?.let { point ->
 
@@ -410,15 +555,19 @@ class DhwaniPipeline(
 
                 when (point) {
 
-                    CalibrationPoint.NEAR ->
+                    CalibrationPoint.NEAR -> {
+
                         calibration.recordNear(
                             raw
                         )
+                    }
 
-                    CalibrationPoint.FAR ->
+                    CalibrationPoint.FAR -> {
+
                         calibration.recordFar(
                             raw
                         )
+                    }
                 }
 
                 pendingCalibrationPoint =
@@ -427,12 +576,17 @@ class DhwaniPipeline(
                 onCalibrationSample(
                     point
                 )
+
+                Log.d(
+                    TAG,
+                    "Calibration sample recorded: $point"
+                )
             }
 
 
-            // -------------------------------------------------
+            // =================================================
             // NORMALIZE DEPTH
-            // -------------------------------------------------
+            // =================================================
 
             /**
              * Converts raw MiDaS depth into:
@@ -441,92 +595,142 @@ class DhwaniPipeline(
              * 1.0 = close
              */
             val closeness =
-                calibration.normalize(
-                    rawDepth
-                )
+                try {
 
-
-            // =================================================
-            // MODE A / HYBRID
-            // =================================================
-
-            if (mode == AppMode.NARRATED) {
-
-                // Narrated mode does not need the continuous
-                // soundscape tone.
-                sonification.muted =
-                    true
-
-            } else {
-
-                sonification.muted =
-                    false
-
-
-                // -------------------------------------------------
-                // HYBRID DUCKING
-                // -------------------------------------------------
-
-                /**
-                 * When voice is speaking,
-                 * reduce soundscape volume.
-                 */
-                sonification.setDucking(
-                    modeB?.isSpeaking == true
-                )
-
-
-                // -------------------------------------------------
-                // ZONE PROCESSING
-                // -------------------------------------------------
-
-                val zones =
-                    ZoneProcessor.processZones(
-                        closeness
+                    calibration.normalize(
+                        rawDepth
                     )
 
+                } catch (e: Exception) {
 
-                // -------------------------------------------------
-                // EMA SMOOTHING
-                // -------------------------------------------------
-
-                smoothed =
-                    ZoneDistances(
-
-                        left =
-                            0.6f * smoothed.left +
-                                    0.4f * zones.left,
-
-                        center =
-                            0.6f * smoothed.center +
-                                    0.4f * zones.center,
-
-                        right =
-                            0.6f * smoothed.right +
-                                    0.4f * zones.right
+                    Log.e(
+                        TAG,
+                        "Depth normalization failed",
+                        e
                     )
 
-
-                // -------------------------------------------------
-                // UPDATE AUDIO
-                // -------------------------------------------------
-
-                sonification.updateFromZones(
-                    smoothed
-                )
-            }
+                    continue
+                }
 
 
             // =================================================
-            // MODE B
+            // MODE-SPECIFIC PROCESSING
             // =================================================
 
-            if (mode == AppMode.NARRATED) {
-                modeBEngine()
-                    .process(
-                        closeness,
-                        frame
+            when (mode) {
+
+                // =================================================
+                // SOUNDSCAPE MODE
+                // =================================================
+
+                AppMode.SOUNDSCAPE -> {
+
+                    /**
+                     * IMPORTANT:
+                     *
+                     * Soundscape mode does NOT run:
+                     *
+                     * - YOLO
+                     * - ObjectTracker
+                     * - RiskEngine
+                     * - Narrated announcements
+                     *
+                     * It only processes the depth map into
+                     * directional sound.
+                     */
+
+                    sonification.muted =
+                        false
+
+                    Log.d(
+                        TAG,
+                        "Processing SOUNDSCAPE frame"
                     )
+
+                    // -------------------------------------------------
+                    // ZONE PROCESSING
+                    // -------------------------------------------------
+
+                    val zones =
+                        ZoneProcessor.processZones(
+                            closeness
+                        )
+
+
+                    // -------------------------------------------------
+                    // EMA SMOOTHING
+                    // -------------------------------------------------
+
+                    smoothed =
+                        ZoneDistances(
+
+                            left =
+                                0.6f * smoothed.left +
+                                        0.4f * zones.left,
+
+                            center =
+                                0.6f * smoothed.center +
+                                        0.4f * zones.center,
+
+                            right =
+                                0.6f * smoothed.right +
+                                        0.4f * zones.right
+                        )
+
+
+                    // -------------------------------------------------
+                    // UPDATE SOUND
+                    // -------------------------------------------------
+
+                    sonification.updateFromZones(
+                        smoothed
+                    )
+                }
+
+
+                // =================================================
+                // NARRATED MODE
+                // =================================================
+
+                AppMode.NARRATED -> {
+
+                    /**
+                     * IMPORTANT:
+                     *
+                     * Narrated mode does NOT run the continuous
+                     * soundscape processing.
+                     *
+                     * It uses:
+                     *
+                     * Camera
+                     *    ↓
+                     * MiDaS
+                     *    ↓
+                     * YOLO26m
+                     *    ↓
+                     * Depth Fusion
+                     *    ↓
+                     * Object Tracker
+                     *    ↓
+                     * Risk Engine
+                     *    ↓
+                     * Announcement Manager
+                     */
+
+                    sonification.muted =
+                        true
+
+                    Log.d(
+                        TAG,
+                        "Processing NARRATED frame"
+                    )
+
+                    modeBEngine()
+                        .process(
+                            closeness,
+                            frame
+                        )
+                }
             }
 
 
@@ -572,8 +776,17 @@ class DhwaniPipeline(
             // TRACKED OBJECTS
             // -------------------------------------------------
 
+            /**
+             * Only Narrated mode has tracked objects.
+             *
+             * Soundscape therefore reports zero here.
+             */
             stats.objectsTracked =
-                modeB?.trackedCount ?: 0
+                if (mode == AppMode.NARRATED) {
+                    modeB?.trackedCount ?: 0
+                } else {
+                    0
+                }
 
 
             // -------------------------------------------------
@@ -603,11 +816,14 @@ class DhwaniPipeline(
      *
      * Mode B contains:
      *
-     * YOLO
-     * ObjectTracker
-     * RiskEngine
-     * AnnouncementManager
-     * TTS
+     * - YOLO26m
+     * - ObjectTracker
+     * - RiskEngine
+     * - AnnouncementManager
+     * - TTS
+     *
+     * The same instance is retained while the application
+     * is running.
      */
     private fun modeBEngine():
             ModeBEngine {
@@ -617,7 +833,13 @@ class DhwaniPipeline(
                 context
             ).also {
 
-                modeB = it
+                Log.d(
+                    TAG,
+                    "Creating ModeBEngine / YOLO26m"
+                )
+
+                modeB =
+                    it
             }
     }
 
@@ -631,8 +853,8 @@ class DhwaniPipeline(
      *
      * Larger raw value = closer.
      *
-     * Therefore the maximum finite value
-     * represents the nearest point.
+     * Therefore the maximum finite value represents the
+     * nearest point.
      */
     private fun maxRawValue(
         depth: Array<FloatArray>
@@ -650,7 +872,8 @@ class DhwaniPipeline(
                     value > max
                 ) {
 
-                    max = value
+                    max =
+                        value
                 }
             }
         }
@@ -668,21 +891,48 @@ class DhwaniPipeline(
      */
     fun stop() {
 
-        running = false
+        Log.d(
+            TAG,
+            "Stopping DhwaniPipeline"
+        )
 
-        // Stop inference worker.
+        running =
+            false
+
+        // -----------------------------------------------------
+        // Stop inference worker
+        // -----------------------------------------------------
+
         inferenceExecutor.shutdown()
 
-        // Stop soundscape.
+
+        // -----------------------------------------------------
+        // Stop soundscape
+        // -----------------------------------------------------
+
         sonification.stop()
 
-        // Release MiDaS.
+
+        // -----------------------------------------------------
+        // Release MiDaS
+        // -----------------------------------------------------
+
         depthEstimator.close()
 
-        // Release Mode B if it was created.
+
+        // -----------------------------------------------------
+        // Release Narrated / YOLO
+        // -----------------------------------------------------
+
         modeB?.shutdown()
 
-        modeB = null
+        modeB =
+            null
+
+        Log.d(
+            TAG,
+            "DhwaniPipeline stopped"
+        )
     }
 }
 
@@ -695,11 +945,38 @@ enum class AppMode {
 
     /**
      * Continuous spatial sound.
+     *
+     * Pipeline:
+     *
+     * Camera
+     *   ↓
+     * MiDaS
+     *   ↓
+     * Zones
+     *   ↓
+     * Soundscape
      */
     SOUNDSCAPE,
 
+
     /**
      * Spoken object descriptions.
+     *
+     * Pipeline:
+     *
+     * Camera
+     *   ↓
+     * MiDaS
+     *   ↓
+     * YOLO26m
+     *   ↓
+     * Depth Fusion
+     *   ↓
+     * Object Tracking
+     *   ↓
+     * Risk
+     *   ↓
+     * Voice
      */
     NARRATED
 }

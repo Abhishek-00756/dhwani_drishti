@@ -17,25 +17,60 @@ import java.util.Locale
 /**
  * Continuous voice command listener for Dhwani.
  *
- * Supported:
+ * =========================================================
+ * SUPPORTED WAKE WORDS
+ * =========================================================
+ *
+ * Hey Dhwani
+ * Hey Dhvani
+ * Hey Dhvni
+ * Hey Dhoni
+ *
+ * Hi Dhwani
+ * Hi Dhvani
+ * Hi Dhvni
+ * Hi Dhoni
+ *
+ * Dhwani
+ * Dhvani
+ * Dhvni
+ * Dhoni
+ *
+ * =========================================================
+ * EXAMPLES
+ * =========================================================
  *
  * "Hey Dhwani, what's in front of me?"
- * "Hey Dhwani, what is in front of me?"
+ * "Hey Dhoni, what's in front of me?"
+ * "Dhwani, what is in front of me?"
  *
  * "Hey Dhwani, read"
- * "Hey Dhwani, read this"
- * "Hey Dhwani, read it"
- *
- * Object-location commands:
+ * "Hey Dhoni, read this"
+ * "Hi Dhvani, read it"
  *
  * "Hey Dhwani, where is the door?"
- * "Hey Dhwani, where's the door?"
+ * "Hey Dhoni, where is the door?"
+ * "Hi Dhvani, where's the door?"
+ * "Dhwani, where is the door?"
+ *
  * "Hey Dhwani, find the door"
  * "Hey Dhwani, locate the door"
+ * "Hey Dhwani, tell me where the door is"
+ * "Hey Dhwani, can you find the door"
+ * "Hey Dhwani, can you locate the door"
  *
- * "Hey Dhwani, where is the pothole?"
- * "Hey Dhwani, where are the stairs?"
- * "Hey Dhwani, where is the person?"
+ * =========================================================
+ * LOCATION COMMANDS
+ * =========================================================
+ *
+ * where is X
+ * where's X
+ * where are X
+ * find X
+ * locate X
+ * tell me where X is
+ * can you find X
+ * can you locate X
  *
  * Speech recognition continuously restarts after every session.
  */
@@ -49,7 +84,7 @@ class VoiceCommandManager(
      *
      * Example:
      *
-     * "where is the door?"
+     * "Hey Dhwani, where is the door?"
      *
      * callback receives:
      *
@@ -60,26 +95,50 @@ class VoiceCommandManager(
 
     companion object {
 
-        private const val TAG = "DHWANI_VOICE"
+        private const val TAG =
+            "DHWANI_VOICE"
 
-        private const val RESTART_DELAY_MS = 700L
+        private const val RESTART_DELAY_MS =
+            700L
 
-        private const val COMMAND_COOLDOWN_MS = 2500L
+        private const val COMMAND_COOLDOWN_MS =
+            2500L
     }
 
+
+    // =========================================================
+    // HANDLER
+    // =========================================================
+
     private val handler =
-        Handler(Looper.getMainLooper())
+        Handler(
+            Looper.getMainLooper()
+        )
+
+
+    // =========================================================
+    // SPEECH RECOGNIZER
+    // =========================================================
 
     private var speechRecognizer:
             SpeechRecognizer? = null
 
-    @Volatile
-    private var listening = false
+
+    // =========================================================
+    // STATE
+    // =========================================================
 
     @Volatile
-    private var commandTriggered = false
+    private var listening =
+        false
 
-    private var lastCommandTime = 0L
+    @Volatile
+    private var commandTriggered =
+        false
+
+    private var lastCommandTime =
+        0L
+
 
     // =========================================================
     // RESTART
@@ -98,6 +157,7 @@ class VoiceCommandManager(
                 startListeningInternal()
             }
         }
+
 
     // =========================================================
     // START
@@ -130,6 +190,7 @@ class VoiceCommandManager(
             return
         }
 
+
         // -----------------------------------------------------
         // MICROPHONE PERMISSION
         // -----------------------------------------------------
@@ -158,6 +219,7 @@ class VoiceCommandManager(
             "RECORD_AUDIO permission = GRANTED"
         )
 
+
         // -----------------------------------------------------
         // SPEECH RECOGNITION
         // -----------------------------------------------------
@@ -180,12 +242,15 @@ class VoiceCommandManager(
             "Speech recognition service is available"
         )
 
-        listening = true
+
+        listening =
+            true
 
         createRecognizer()
 
         startListeningInternal()
     }
+
 
     // =========================================================
     // CREATE RECOGNIZER
@@ -202,7 +267,9 @@ class VoiceCommandManager(
 
         speechRecognizer =
             SpeechRecognizer
-                .createSpeechRecognizer(context)
+                .createSpeechRecognizer(
+                    context
+                )
 
         speechRecognizer?.setRecognitionListener(
 
@@ -218,6 +285,7 @@ class VoiceCommandManager(
                     )
                 }
 
+
                 override fun onBeginningOfSpeech() {
 
                     Log.d(
@@ -226,11 +294,14 @@ class VoiceCommandManager(
                     )
                 }
 
+
                 override fun onRmsChanged(
                     rmsdB: Float
                 ) {
 
-                    if (rmsdB > -5f) {
+                    if (
+                        rmsdB > -5f
+                    ) {
 
                         Log.d(
                             TAG,
@@ -239,10 +310,12 @@ class VoiceCommandManager(
                     }
                 }
 
+
                 override fun onBufferReceived(
                     buffer: ByteArray?
                 ) {
                 }
+
 
                 override fun onEndOfSpeech() {
 
@@ -251,6 +324,7 @@ class VoiceCommandManager(
                         "END OF SPEECH"
                     )
                 }
+
 
                 // =================================================
                 // ERROR
@@ -267,10 +341,12 @@ class VoiceCommandManager(
                                 "(${errorToString(error)})"
                     )
 
-                    commandTriggered = false
+                    commandTriggered =
+                        false
 
                     scheduleRestart()
                 }
+
 
                 // =================================================
                 // FINAL RESULT
@@ -295,7 +371,9 @@ class VoiceCommandManager(
                         !matches.isNullOrEmpty()
                     ) {
 
-                        for (text in matches) {
+                        for (
+                        text in matches
+                        ) {
 
                             Log.d(
                                 TAG,
@@ -313,6 +391,7 @@ class VoiceCommandManager(
 
                     scheduleRestart()
                 }
+
 
                 // =================================================
                 // PARTIAL RESULT
@@ -338,7 +417,9 @@ class VoiceCommandManager(
                         !matches.isNullOrEmpty()
                     ) {
 
-                        for (text in matches) {
+                        for (
+                        text in matches
+                        ) {
 
                             if (
                                 handleCommand(text)
@@ -349,6 +430,7 @@ class VoiceCommandManager(
                         }
                     }
                 }
+
 
                 override fun onEvent(
                     eventType: Int,
@@ -369,6 +451,7 @@ class VoiceCommandManager(
         )
     }
 
+
     // =========================================================
     // START LISTENING
     // =========================================================
@@ -378,6 +461,7 @@ class VoiceCommandManager(
         if (!listening) {
             return
         }
+
 
         if (
             speechRecognizer == null
@@ -390,6 +474,7 @@ class VoiceCommandManager(
 
             createRecognizer()
         }
+
 
         val permission =
             ContextCompat.checkSelfPermission(
@@ -410,6 +495,7 @@ class VoiceCommandManager(
 
             return
         }
+
 
         try {
 
@@ -481,6 +567,7 @@ class VoiceCommandManager(
                     )
                 }
 
+
             Log.d(
                 TAG,
                 "Calling SpeechRecognizer.startListening()"
@@ -489,7 +576,9 @@ class VoiceCommandManager(
             speechRecognizer
                 ?.startListening(intent)
 
-        } catch (e: SecurityException) {
+        } catch (
+            e: SecurityException
+        ) {
 
             Log.e(
                 TAG,
@@ -499,7 +588,9 @@ class VoiceCommandManager(
 
             scheduleRestart()
 
-        } catch (e: Exception) {
+        } catch (
+            e: Exception
+        ) {
 
             Log.e(
                 TAG,
@@ -511,6 +602,7 @@ class VoiceCommandManager(
         }
     }
 
+
     // =========================================================
     // HANDLE COMMAND
     // =========================================================
@@ -519,7 +611,9 @@ class VoiceCommandManager(
         originalText: String
     ): Boolean {
 
-        if (commandTriggered) {
+        if (
+            commandTriggered
+        ) {
 
             Log.d(
                 TAG,
@@ -529,26 +623,40 @@ class VoiceCommandManager(
             return true
         }
 
-        val normalized =
-            normalizeText(originalText)
 
-        if (normalized.isBlank()) {
+        val normalized =
+            normalizeText(
+                originalText
+            )
+
+
+        if (
+            normalized.isBlank()
+        ) {
+
             return false
         }
+
 
         Log.d(
             TAG,
             "Checking command: [$normalized]"
         )
 
-        // -----------------------------------------------------
+
+        // =====================================================
         // WAKE WORD
-        // -----------------------------------------------------
+        // =====================================================
 
         val wakeWordDetected =
-            containsWakeWord(normalized)
+            containsWakeWord(
+                normalized
+            )
 
-        if (!wakeWordDetected) {
+
+        if (
+            !wakeWordDetected
+        ) {
 
             Log.d(
                 TAG,
@@ -558,50 +666,52 @@ class VoiceCommandManager(
             return false
         }
 
-        // -----------------------------------------------------
-        // READ
-        // -----------------------------------------------------
 
-        if (
-            isReadCommand(normalized)
-        ) {
+        // =====================================================
+        // REMOVE WAKE WORD
+        // =====================================================
 
-            Log.d(
-                TAG,
-                "READ COMMAND MATCHED"
-            )
-
-            triggerRead()
-
-            return true
-        }
-
-        // -----------------------------------------------------
-        // WHAT IS IN FRONT
-        // -----------------------------------------------------
-
-        if (
-            isWhatIsInFrontCommand(
+        val commandPart =
+            removeWakeWords(
                 normalized
             )
+
+        Log.d(
+            TAG,
+            "Command after wake word removal: [$commandPart]"
+        )
+
+
+        if (
+            commandPart.isBlank()
         ) {
 
-            Log.d(
-                TAG,
-                "WHAT IS IN FRONT COMMAND MATCHED"
-            )
-
-            triggerWhatIsInFront()
-
-            return true
+            return false
         }
 
-        // -----------------------------------------------------
-        // LOCATE OBJECT
-        // -----------------------------------------------------
 
+        // =====================================================
+        // LOCATE OBJECT FIRST
+        // =====================================================
+
+        /**
+         * IMPORTANT:
+         *
+         * Check object-location commands BEFORE the generic
+         * "what is in front" command.
+         *
+         * This prevents:
+         *
+         * "where is the door in front of me"
+         *
+         * from accidentally being interpreted as only
+         * "what is in front of me".
+         */
         val objectName =
-            extractLocateObject(normalized)
+            extractLocateObject(
+                commandPart
+            )
+
 
         if (
             objectName != null
@@ -624,8 +734,52 @@ class VoiceCommandManager(
             return true
         }
 
+
+        // =====================================================
+        // READ
+        // =====================================================
+
+        if (
+            isReadCommand(
+                commandPart
+            )
+        ) {
+
+            Log.d(
+                TAG,
+                "READ COMMAND MATCHED"
+            )
+
+            triggerRead()
+
+            return true
+        }
+
+
+        // =====================================================
+        // WHAT IS IN FRONT
+        // =====================================================
+
+        if (
+            isWhatIsInFrontCommand(
+                commandPart
+            )
+        ) {
+
+            Log.d(
+                TAG,
+                "WHAT IS IN FRONT COMMAND MATCHED"
+            )
+
+            triggerWhatIsInFront()
+
+            return true
+        }
+
+
         return false
     }
+
 
     // =========================================================
     // NORMALIZE
@@ -636,7 +790,9 @@ class VoiceCommandManager(
     ): String {
 
         return text
-            .lowercase(Locale.US)
+            .lowercase(
+                Locale.US
+            )
             .replace(
                 Regex("[^a-z0-9 ]"),
                 " "
@@ -648,167 +804,220 @@ class VoiceCommandManager(
             .trim()
     }
 
+
     // =========================================================
     // WAKE WORD
     // =========================================================
 
+    /**
+     * Detects many common speech-recognition variations
+     * of "Dhwani".
+     *
+     * Supported:
+     *
+     * hey dhwani
+     * hey dhvani
+     * hey dhvni
+     * hey dhoni
+     *
+     * hi dhwani
+     * hi dhvani
+     * hi dhvni
+     * hi dhoni
+     *
+     * dhwani
+     * dhvani
+     * dhvni
+     * dhoni
+     */
     private fun containsWakeWord(
         normalized: String
     ): Boolean {
 
-        return normalized.contains(
-            "hey dhwani"
-        ) ||
-                normalized.contains(
-                    "hey dhvani"
-                ) ||
-                normalized.contains(
-                    "hey dhvni"
-                ) ||
-                normalized.contains(
-                    "hi dhwani"
-                ) ||
-                normalized.contains(
-                    "hi dhvani"
-                ) ||
-                normalized.contains(
-                    "hi dhvni"
-                ) ||
-                normalized.contains(
-                    "hey dhoni"
-                ) ||
-                normalized.contains(
-                    "hi dhoni"
-                ) ||
-                normalized.contains(
-                    "dhwani"
-                ) ||
-                normalized.contains(
-                    "dhvani"
-                ) ||
-                normalized.contains(
-                    "dhvni"
-                ) ||
-                normalized.contains(
-                    "dhoni"
-                )
+        val wakeWords =
+            listOf(
+
+                // Hey variants
+                "hey dhwani",
+                "hey dhvani",
+                "hey dhvni",
+                "hey dhoni",
+
+                // Hi variants
+                "hi dhwani",
+                "hi dhvani",
+                "hi dhvni",
+                "hi dhoni",
+
+                // Direct name
+                "dhwani",
+                "dhvani",
+                "dhvni",
+                "dhoni"
+            )
+
+
+        return wakeWords.any { wakeWord ->
+
+            normalized.contains(
+                wakeWord
+            )
+        }
     }
+
 
     // =========================================================
     // READ COMMAND
     // =========================================================
 
     private fun isReadCommand(
-        normalized: String
+        commandPart: String
     ): Boolean {
 
-        val commandPart =
-            removeWakeWords(
-                normalized
-            )
+        val command =
+            commandPart
+                .trim()
+
 
         Log.d(
             TAG,
-            "Read command part: [$commandPart]"
+            "Read command part: [$command]"
         )
 
+
+        // -----------------------------------------------------
+        // Exact commands
+        // -----------------------------------------------------
+
         if (
-            commandPart == "read"
+            command == "read"
         ) {
             return true
         }
 
+
         if (
-            commandPart == "read this"
+            command == "read this"
         ) {
             return true
         }
 
+
         if (
-            commandPart == "read it"
+            command == "read it"
         ) {
             return true
         }
 
+
         if (
-            commandPart == "please read"
+            command == "please read"
         ) {
             return true
         }
 
+
+        // -----------------------------------------------------
+        // Natural variations
+        // -----------------------------------------------------
+
         if (
-            commandPart.startsWith(
+            command.startsWith(
                 "read this "
             )
         ) {
             return true
         }
 
+
         if (
-            commandPart.startsWith(
+            command.startsWith(
                 "read it "
             )
         ) {
             return true
         }
 
-        return commandPart.contains(
+
+        if (
+            command.startsWith(
+                "please read "
+            )
+        ) {
+            return true
+        }
+
+
+        return command.contains(
             Regex("\\bread\\b")
         )
     }
+
 
     // =========================================================
     // WHAT IS IN FRONT
     // =========================================================
 
     private fun isWhatIsInFrontCommand(
-        normalized: String
+        commandPart: String
     ): Boolean {
 
-        val commandPart =
-            removeWakeWords(
-                normalized
-            )
+        val command =
+            commandPart
+                .trim()
+
 
         Log.d(
             TAG,
-            "Front command part: [$commandPart]"
+            "Front command part: [$command]"
         )
 
-        return commandPart.contains(
+
+        return command.contains(
             "what s in front of me"
         ) ||
-                commandPart.contains(
+
+                command.contains(
                     "whats in front of me"
                 ) ||
-                commandPart.contains(
+
+                command.contains(
                     "what is in front of me"
                 ) ||
-                commandPart.contains(
+
+                command.contains(
                     "what in front of me"
                 ) ||
-                commandPart.contains(
+
+                command.contains(
                     "whats in front"
                 ) ||
-                commandPart.contains(
+
+                command.contains(
                     "what is in front"
                 ) ||
-                commandPart.contains(
+
+                command.contains(
                     "in front of me"
                 ) ||
-                commandPart.contains(
+
+                command.contains(
                     "front of me"
                 ) ||
-                commandPart.contains(
+
+                command.contains(
                     "what do i have in front"
                 ) ||
-                commandPart.contains(
+
+                command.contains(
                     "what do you see"
                 ) ||
-                commandPart.contains(
+
+                command.contains(
                     "what can you see"
                 )
     }
+
 
     // =========================================================
     // LOCATE OBJECT COMMAND
@@ -817,98 +1026,232 @@ class VoiceCommandManager(
     /**
      * Extracts an object name from commands such as:
      *
-     * "where is the door"
-     * "where's the door"
-     * "find the door"
-     * "locate the door"
-     * "where is pothole"
-     * "find stairs"
+     * where is the door
+     * where's the door
+     * where are the stairs
+     * find the door
+     * locate the door
+     * tell me where the door is
+     * can you find the door
+     * can you locate the door
+     *
+     * The commandPart is already stripped of the wake word.
      */
     private fun extractLocateObject(
-        normalized: String
+        commandPart: String
     ): String? {
 
-        val commandPart =
-            removeWakeWords(
-                normalized
-            )
+        val command =
+            commandPart
+                .trim()
+
 
         Log.d(
             TAG,
-            "Locate command part: [$commandPart]"
+            "Locate command part: [$command]"
         )
+
 
         val patterns =
             listOf(
 
-                // where is X
+                // -------------------------------------------------
+                // WHERE IS X
+                // -------------------------------------------------
+
                 Regex(
                     "^where is (?:the |a |an )?(.+)$"
                 ),
 
-                // where are X
+
+                // -------------------------------------------------
+                // WHERE ARE X
+                // -------------------------------------------------
+
                 Regex(
-                    "^where are (?:the |some )?(.+)$"
+                    "^where are (?:the |some |the )?(.+)$"
                 ),
 
-                // where's X
+
+                // -------------------------------------------------
+                // WHERE'S X
+                // -------------------------------------------------
+
                 Regex(
                     "^wheres (?:the |a |an )?(.+)$"
                 ),
 
-                // find X
+
+                // -------------------------------------------------
+                // WHERE IS X LOCATED
+                // -------------------------------------------------
+
+                Regex(
+                    "^where is (?:the |a |an )?(.+) located$"
+                ),
+
+
+                // -------------------------------------------------
+                // WHERE CAN I FIND X
+                // -------------------------------------------------
+
+                Regex(
+                    "^where can i find (?:the |a |an )?(.+)$"
+                ),
+
+
+                // -------------------------------------------------
+                // WHERE CAN I SEE X
+                // -------------------------------------------------
+
+                Regex(
+                    "^where can i see (?:the |a |an )?(.+)$"
+                ),
+
+
+                // -------------------------------------------------
+                // FIND X
+                // -------------------------------------------------
+
                 Regex(
                     "^find (?:the |a |an )?(.+)$"
                 ),
 
-                // locate X
+
+                // -------------------------------------------------
+                // FIND X FOR ME
+                // -------------------------------------------------
+
+                Regex(
+                    "^find (?:the |a |an )?(.+) for me$"
+                ),
+
+
+                // -------------------------------------------------
+                // LOCATE X
+                // -------------------------------------------------
+
                 Regex(
                     "^locate (?:the |a |an )?(.+)$"
                 ),
 
-                // tell me where X is
+
+                // -------------------------------------------------
+                // TELL ME WHERE X IS
+                // -------------------------------------------------
+
                 Regex(
                     "^tell me where (?:the |a |an )?(.+) is$"
                 ),
 
-                // can you find X
+
+                // -------------------------------------------------
+                // TELL ME WHERE X IS LOCATED
+                // -------------------------------------------------
+
+                Regex(
+                    "^tell me where (?:the |a |an )?(.+) is located$"
+                ),
+
+
+                // -------------------------------------------------
+                // CAN YOU FIND X
+                // -------------------------------------------------
+
                 Regex(
                     "^can you find (?:the |a |an )?(.+)$"
                 ),
 
-                // can you locate X
+
+                // -------------------------------------------------
+                // CAN YOU LOCATE X
+                // -------------------------------------------------
+
                 Regex(
                     "^can you locate (?:the |a |an )?(.+)$"
+                ),
+
+
+                // -------------------------------------------------
+                // CAN YOU TELL ME WHERE X IS
+                // -------------------------------------------------
+
+                Regex(
+                    "^can you tell me where (?:the |a |an )?(.+) is$"
+                ),
+
+
+                // -------------------------------------------------
+                // DO YOU KNOW WHERE X IS
+                // -------------------------------------------------
+
+                Regex(
+                    "^do you know where (?:the |a |an )?(.+) is$"
+                ),
+
+
+                // -------------------------------------------------
+                // I WANT TO KNOW WHERE X IS
+                // -------------------------------------------------
+
+                Regex(
+                    "^i want to know where (?:the |a |an )?(.+) is$"
+                ),
+
+
+                // -------------------------------------------------
+                // SHOW ME WHERE X IS
+                // -------------------------------------------------
+
+                Regex(
+                    "^show me where (?:the |a |an )?(.+) is$"
                 )
             )
 
-        for (pattern in patterns) {
+
+        for (
+        pattern in patterns
+        ) {
 
             val match =
-                pattern.find(commandPart)
+                pattern.find(
+                    command
+                )
 
-            if (match != null) {
+
+            if (
+                match != null
+            ) {
 
                 var objectName =
                     match.groupValues[1]
                         .trim()
+
 
                 objectName =
                     cleanObjectName(
                         objectName
                     )
 
+
                 if (
                     objectName.isNotBlank()
                 ) {
+
+                    Log.d(
+                        TAG,
+                        "Extracted object = [$objectName]"
+                    )
 
                     return objectName
                 }
             }
         }
 
+
         return null
     }
+
 
     // =========================================================
     // CLEAN OBJECT NAME
@@ -920,81 +1263,157 @@ class VoiceCommandManager(
 
         var result =
             text
-                .lowercase(Locale.US)
+                .lowercase(
+                    Locale.US
+                )
                 .trim()
 
-        // Remove polite trailing phrases.
+
+        // -----------------------------------------------------
+        // Remove punctuation-like leftovers
+        // -----------------------------------------------------
+
         result =
             result
-                .removeSuffix(" please")
-                .removeSuffix(" for me")
+                .replace(
+                    Regex("[^a-z0-9 ]"),
+                    " "
+                )
+                .replace(
+                    Regex("\\s+"),
+                    " "
+                )
                 .trim()
 
-        // Remove common articles.
+
+        // -----------------------------------------------------
+        // Remove polite trailing phrases
+        // -----------------------------------------------------
+
         result =
             result
-                .removePrefix("the ")
-                .removePrefix("a ")
-                .removePrefix("an ")
+                .removeSuffix(
+                    " please"
+                )
+                .removeSuffix(
+                    " for me"
+                )
                 .trim()
+
+
+        // -----------------------------------------------------
+        // Remove common articles
+        // -----------------------------------------------------
+
+        result =
+            result
+                .removePrefix(
+                    "the "
+                )
+                .removePrefix(
+                    "a "
+                )
+                .removePrefix(
+                    "an "
+                )
+                .trim()
+
 
         return result
     }
 
+
     // =========================================================
-    // REMOVE WAKE WORD
+    // REMOVE WAKE WORDS
     // =========================================================
 
+    /**
+     * Removes all supported wake-word variants from the
+     * recognized sentence.
+     *
+     * Examples:
+     *
+     * "hey dhwani where is the door"
+     *      ->
+     * "where is the door"
+     *
+     * "hey dhoni find the laptop"
+     *      ->
+     * "find the laptop"
+     *
+     * "hi dhvani read this"
+     *      ->
+     * "read this"
+     */
     private fun removeWakeWords(
         text: String
     ): String {
 
-        var result = text
+        var result =
+            text
 
-        val wakeWords =
+
+        // -----------------------------------------------------
+        // Remove complete wake phrases first
+        // -----------------------------------------------------
+
+        val wakePhrases =
             listOf(
+
                 "hey dhwani",
                 "hey dhvani",
                 "hey dhvni",
                 "hey dhoni",
+
                 "hi dhwani",
                 "hi dhvani",
                 "hi dhvni",
                 "hi dhoni"
             )
 
-        for (wakeWord in wakeWords) {
+
+        for (
+        wakePhrase in wakePhrases
+        ) {
 
             result =
                 result.replace(
-                    wakeWord,
+                    wakePhrase,
                     " "
                 )
         }
 
-        result =
-            result.replace(
-                Regex("\\bdhwani\\b"),
-                " "
+
+        // -----------------------------------------------------
+        // Remove standalone names
+        // -----------------------------------------------------
+
+        val standaloneWakeWords =
+            listOf(
+                "dhwani",
+                "dhvani",
+                "dhvni",
+                "dhoni"
             )
 
-        result =
-            result.replace(
-                Regex("\\bdhvani\\b"),
-                " "
-            )
 
-        result =
-            result.replace(
-                Regex("\\bdhvni\\b"),
-                " "
-            )
+        for (
+        wakeWord in standaloneWakeWords
+        ) {
 
-        result =
-            result.replace(
-                Regex("\\bdhoni\\b"),
-                " "
-            )
+            result =
+                result.replace(
+                    Regex(
+                        "\\b$wakeWord\\b"
+                    ),
+                    " "
+                )
+        }
+
+
+        // -----------------------------------------------------
+        // Normalize remaining spaces
+        // -----------------------------------------------------
 
         return result
             .replace(
@@ -1003,6 +1422,7 @@ class VoiceCommandManager(
             )
             .trim()
     }
+
 
     // =========================================================
     // TRIGGER READ
@@ -1013,10 +1433,14 @@ class VoiceCommandManager(
         if (
             !canTriggerCommand()
         ) {
+
             return
         }
 
-        commandTriggered = true
+
+        commandTriggered =
+            true
+
 
         Log.d(
             TAG,
@@ -1028,12 +1452,15 @@ class VoiceCommandManager(
             "READ COMMAND TRIGGERED"
         )
 
+
         try {
 
             speechRecognizer
                 ?.stopListening()
 
-        } catch (e: Exception) {
+        } catch (
+            e: Exception
+        ) {
 
             Log.e(
                 TAG,
@@ -1042,11 +1469,14 @@ class VoiceCommandManager(
             )
         }
 
+
         try {
 
             onRead()
 
-        } catch (e: Exception) {
+        } catch (
+            e: Exception
+        ) {
 
             Log.e(
                 TAG,
@@ -1055,8 +1485,10 @@ class VoiceCommandManager(
             )
         }
 
+
         resetCommandAfterCooldown()
     }
+
 
     // =========================================================
     // TRIGGER FRONT
@@ -1067,10 +1499,14 @@ class VoiceCommandManager(
         if (
             !canTriggerCommand()
         ) {
+
             return
         }
 
-        commandTriggered = true
+
+        commandTriggered =
+            true
+
 
         Log.d(
             TAG,
@@ -1082,12 +1518,15 @@ class VoiceCommandManager(
             "WHAT IS IN FRONT TRIGGERED"
         )
 
+
         try {
 
             speechRecognizer
                 ?.stopListening()
 
-        } catch (e: Exception) {
+        } catch (
+            e: Exception
+        ) {
 
             Log.e(
                 TAG,
@@ -1096,11 +1535,14 @@ class VoiceCommandManager(
             )
         }
 
+
         try {
 
             onWhatIsInFront()
 
-        } catch (e: Exception) {
+        } catch (
+            e: Exception
+        ) {
 
             Log.e(
                 TAG,
@@ -1109,8 +1551,10 @@ class VoiceCommandManager(
             )
         }
 
+
         resetCommandAfterCooldown()
     }
+
 
     // =========================================================
     // TRIGGER LOCATE OBJECT
@@ -1123,10 +1567,14 @@ class VoiceCommandManager(
         if (
             !canTriggerCommand()
         ) {
+
             return
         }
 
-        commandTriggered = true
+
+        commandTriggered =
+            true
+
 
         Log.d(
             TAG,
@@ -1143,12 +1591,15 @@ class VoiceCommandManager(
             "Object = [$objectName]"
         )
 
+
         try {
 
             speechRecognizer
                 ?.stopListening()
 
-        } catch (e: Exception) {
+        } catch (
+            e: Exception
+        ) {
 
             Log.e(
                 TAG,
@@ -1157,13 +1608,16 @@ class VoiceCommandManager(
             )
         }
 
+
         try {
 
             onLocateObject(
                 objectName
             )
 
-        } catch (e: Exception) {
+        } catch (
+            e: Exception
+        ) {
 
             Log.e(
                 TAG,
@@ -1172,17 +1626,21 @@ class VoiceCommandManager(
             )
         }
 
+
         resetCommandAfterCooldown()
     }
+
 
     // =========================================================
     // COMMAND COOLDOWN
     // =========================================================
 
-    private fun canTriggerCommand(): Boolean {
+    private fun canTriggerCommand():
+            Boolean {
 
         val now =
             System.currentTimeMillis()
+
 
         if (
             now - lastCommandTime <
@@ -1197,11 +1655,14 @@ class VoiceCommandManager(
             return false
         }
 
+
         lastCommandTime =
             now
 
+
         return true
     }
+
 
     private fun resetCommandAfterCooldown() {
 
@@ -1212,7 +1673,10 @@ class VoiceCommandManager(
                 commandTriggered =
                     false
 
-                if (listening) {
+
+                if (
+                    listening
+                ) {
 
                     Log.d(
                         TAG,
@@ -1228,25 +1692,32 @@ class VoiceCommandManager(
         )
     }
 
+
     // =========================================================
     // RESTART
     // =========================================================
 
     private fun scheduleRestart() {
 
-        if (!listening) {
+        if (
+            !listening
+        ) {
+
             return
         }
+
 
         handler.removeCallbacks(
             restartRunnable
         )
+
 
         handler.postDelayed(
             restartRunnable,
             RESTART_DELAY_MS
         )
     }
+
 
     // =========================================================
     // ERROR TEXT
@@ -1294,6 +1765,7 @@ class VoiceCommandManager(
         }
     }
 
+
     // =========================================================
     // STOP
     // =========================================================
@@ -1305,13 +1777,18 @@ class VoiceCommandManager(
             "Stopping VoiceCommandManager"
         )
 
-        listening = false
 
-        commandTriggered = false
+        listening =
+            false
+
+        commandTriggered =
+            false
+
 
         handler.removeCallbacks(
             restartRunnable
         )
+
 
         try {
 
@@ -1321,6 +1798,7 @@ class VoiceCommandManager(
         } catch (_: Exception) {
         }
 
+
         try {
 
             speechRecognizer
@@ -1329,8 +1807,11 @@ class VoiceCommandManager(
         } catch (_: Exception) {
         }
 
-        speechRecognizer?.destroy()
 
-        speechRecognizer = null
+        speechRecognizer
+            ?.destroy()
+
+        speechRecognizer =
+            null
     }
 }

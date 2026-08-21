@@ -3,6 +3,7 @@ package com.dhwanidrishti.app.pipeline
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
+
 import com.dhwanidrishti.app.audio.AnnouncementManager
 import com.dhwanidrishti.app.ml.ObjectDetector
 import com.dhwanidrishti.app.ml.RiskEngine
@@ -33,6 +34,7 @@ import com.dhwanidrishti.app.processing.fuseDetectionsWithDepth
  * "Hey Dhwani, what is in front of me?"
  * "Hey Dhwani, where is the door?"
  * "Hey Dhwani, where is the person?"
+ * "Hey Dhwani, where is the laptop?"
  * "Hey Dhwani, read"
  */
 class ModeBEngine(
@@ -44,9 +46,9 @@ class ModeBEngine(
         private const val TAG = "ModeBEngine"
 
         /**
-         * Your new 17-class YOLO26m LiteRT model.
+         * Current 17-class YOLO26m model.
          *
-         * This file must exist in:
+         * File:
          *
          * app/src/main/assets/dhwani_drishti_17class.tflite
          */
@@ -60,26 +62,6 @@ class ModeBEngine(
 
     /**
      * YOLO26m 17-class object detector.
-     *
-     * Model classes:
-     *
-     * 0  person
-     * 1  bicycle
-     * 2  car
-     * 3  motorcycle
-     * 4  truck
-     * 5  stop sign
-     * 6  bench
-     * 7  dog
-     * 8  chair
-     * 9  bed
-     * 10 laptop
-     * 11 book
-     * 12 bag
-     * 13 door
-     * 14 window
-     * 15 stair
-     * 16 pothole
      */
     private val detector =
         ObjectDetector(
@@ -169,15 +151,6 @@ class ModeBEngine(
      * 3. Object tracking
      * 4. Risk evaluation
      * 5. Automatic announcement
-     *
-     * @param closeness
-     * MiDaS normalized closeness map.
-     *
-     * 1.0 = closest
-     * 0.0 = farthest
-     *
-     * @param frame
-     * Original camera frame.
      */
     fun process(
         closeness: Array<FloatArray>,
@@ -221,9 +194,40 @@ class ModeBEngine(
                 emptyList()
             }
 
+        // -----------------------------------------------------
+        // IMPORTANT DEBUG LOG
+        // -----------------------------------------------------
+
         Log.d(
             TAG,
-            "YOLO detections: ${rawDetections.size}"
+            "========================================"
+        )
+
+        Log.d(
+            TAG,
+            "RAW YOLO COUNT = ${rawDetections.size}"
+        )
+
+        /**
+         * Print every YOLO detection.
+         *
+         * This tells us whether the model itself is producing
+         * multiple objects.
+         */
+        rawDetections.forEachIndexed { index, detection ->
+
+            Log.d(
+                TAG,
+                "RAW[$index] " +
+                        "label=${detection.label} " +
+                        "confidence=${detection.confidence} " +
+                        "box=${detection.boundingBox}"
+            )
+        }
+
+        Log.d(
+            TAG,
+            "========================================"
         )
 
         // -----------------------------------------------------
@@ -231,6 +235,11 @@ class ModeBEngine(
         // -----------------------------------------------------
 
         if (rawDetections.isEmpty()) {
+
+            Log.d(
+                TAG,
+                "YOLO returned 0 detections"
+            )
 
             highestRisk =
                 null
@@ -261,18 +270,56 @@ class ModeBEngine(
                 emptyList()
             }
 
+        // -----------------------------------------------------
+        // IMPORTANT DEBUG LOG
+        // -----------------------------------------------------
+
+        Log.d(
+            TAG,
+            "========================================"
+        )
+
+        Log.d(
+            TAG,
+            "DEPTH FUSED COUNT = ${detectedObjects.size}"
+        )
+
+        /**
+         * Print every object after depth fusion.
+         *
+         * If YOLO says 2 objects but this says 1,
+         * the problem is between YOLO and depth fusion.
+         */
+        detectedObjects.forEachIndexed { index, obj ->
+
+            Log.d(
+                TAG,
+                "FUSED[$index] " +
+                        "label=${obj.label} " +
+                        "confidence=${obj.confidence} " +
+                        "distance=${obj.distance} " +
+                        "zone=${obj.zone} " +
+                        "box=${obj.boundingBox}"
+            )
+        }
+
+        Log.d(
+            TAG,
+            "========================================"
+        )
+
         if (detectedObjects.isEmpty()) {
+
+            Log.d(
+                TAG,
+                "All YOLO detections were removed during depth fusion"
+            )
 
             highestRisk =
                 null
 
             return
         }
-
-        Log.d(
-            TAG,
-            "Depth-fused objects: ${detectedObjects.size}"
-        )
 
         // =====================================================
         // 4. OBJECT TRACKING
@@ -297,6 +344,52 @@ class ModeBEngine(
             }
 
         // -----------------------------------------------------
+        // IMPORTANT DEBUG LOG
+        // -----------------------------------------------------
+
+        Log.d(
+            TAG,
+            "========================================"
+        )
+
+        Log.d(
+            TAG,
+            "TRACKED COUNT = ${trackedObjects.size}"
+        )
+
+        /**
+         * Print every active track.
+         *
+         * If:
+         *
+         * DEPTH FUSED COUNT = 2
+         *
+         * but:
+         *
+         * TRACKED COUNT = 1
+         *
+         * then ObjectTracker is the problem.
+         */
+        trackedObjects.forEachIndexed { index, obj ->
+
+            Log.d(
+                TAG,
+                "TRACKED[$index] " +
+                        "id=${obj.id} " +
+                        "label=${obj.label} " +
+                        "confidence=${obj.lastConfidence} " +
+                        "distance=${obj.lastDistance} " +
+                        "zone=${obj.lastZone} " +
+                        "centroid=${obj.lastCentroid}"
+            )
+        }
+
+        Log.d(
+            TAG,
+            "========================================"
+        )
+
+        // -----------------------------------------------------
         // Save latest valid scene.
         // -----------------------------------------------------
 
@@ -305,11 +398,6 @@ class ModeBEngine(
 
         trackedCount =
             trackedObjects.size
-
-        Log.d(
-            TAG,
-            "Tracked objects: $trackedCount"
-        )
 
         // =====================================================
         // 5. RISK EVALUATION
@@ -341,6 +429,15 @@ class ModeBEngine(
                     continue
                 }
 
+            Log.d(
+                TAG,
+                "RISK " +
+                        "label=${detectedObject.label} " +
+                        "score=${risk.score} " +
+                        "level=${risk.level} " +
+                        "reason=${risk.reason}"
+            )
+
             if (
                 mostDangerousRisk == null ||
                 risk.score >
@@ -360,6 +457,11 @@ class ModeBEngine(
         // =====================================================
 
         try {
+
+            Log.d(
+                TAG,
+                "Sending ${trackedObjects.size} tracked objects to AnnouncementManager"
+            )
 
             announcements.evaluate(
                 tracked = trackedObjects,
@@ -384,10 +486,6 @@ class ModeBEngine(
 
     /**
      * Describes the currently visible scene.
-     *
-     * Example:
-     *
-     * "I see a person and a laptop in front of you."
      */
     fun answerWhatIsInFront() {
 
@@ -398,6 +496,23 @@ class ModeBEngine(
 
         val scene =
             latestTrackedObjects
+
+        Log.d(
+            TAG,
+            "Scene size for front query = ${scene.size}"
+        )
+
+        scene.forEach { obj ->
+
+            Log.d(
+                TAG,
+                "Front query object: " +
+                        "id=${obj.id}, " +
+                        "label=${obj.label}, " +
+                        "zone=${obj.lastZone}, " +
+                        "distance=${obj.lastDistance}"
+            )
+        }
 
         if (scene.isEmpty()) {
 
@@ -420,8 +535,8 @@ class ModeBEngine(
     // =========================================================
 
     /**
-     * Finds a requested object in the latest scene and
-     * announces its position.
+     * Finds a requested object in the latest scene
+     * and announces its position.
      *
      * Examples:
      *
@@ -440,7 +555,12 @@ class ModeBEngine(
 
         Log.d(
             TAG,
-            "Location query received: [$objectName]"
+            "========================================"
+        )
+
+        Log.d(
+            TAG,
+            "LOCATION QUERY RECEIVED: [$objectName]"
         )
 
         // -----------------------------------------------------
@@ -468,6 +588,28 @@ class ModeBEngine(
         val scene =
             latestTrackedObjects
 
+        Log.d(
+            TAG,
+            "LOCATION QUERY SCENE SIZE = ${scene.size}"
+        )
+
+        // -----------------------------------------------------
+        // Print current scene.
+        // -----------------------------------------------------
+
+        scene.forEach { obj ->
+
+            Log.d(
+                TAG,
+                "SCENE OBJECT: " +
+                        "id=${obj.id} " +
+                        "label=${obj.label} " +
+                        "confidence=${obj.lastConfidence} " +
+                        "distance=${obj.lastDistance} " +
+                        "zone=${obj.lastZone}"
+            )
+        }
+
         if (scene.isEmpty()) {
 
             announcements.speak(
@@ -479,16 +621,6 @@ class ModeBEngine(
 
         // -----------------------------------------------------
         // Find matching objects.
-        //
-        // contains() makes the command more tolerant.
-        //
-        // Example:
-        //
-        // "door"
-        // matches "door"
-        //
-        // "laptop"
-        // matches "laptop"
         // -----------------------------------------------------
 
         val matchingObjects =
@@ -501,6 +633,23 @@ class ModeBEngine(
                         requestedObject
                     )
             }
+
+        Log.d(
+            TAG,
+            "MATCHING OBJECTS FOR [$requestedObject] = ${matchingObjects.size}"
+        )
+
+        matchingObjects.forEach { obj ->
+
+            Log.d(
+                TAG,
+                "MATCH: " +
+                        "id=${obj.id} " +
+                        "label=${obj.label} " +
+                        "zone=${obj.lastZone} " +
+                        "distance=${obj.lastDistance}"
+            )
+        }
 
         // -----------------------------------------------------
         // Object not found.
@@ -532,8 +681,6 @@ class ModeBEngine(
         // -----------------------------------------------------
         // If multiple matching objects exist,
         // select the closest one.
-        //
-        // lastDistance:
         //
         // 0.0 = closest
         // 1.0 = farthest
@@ -595,7 +742,12 @@ class ModeBEngine(
 
         Log.d(
             TAG,
-            "Location query result: $message"
+            "LOCATION RESULT = $message"
+        )
+
+        Log.d(
+            TAG,
+            "========================================"
         )
 
         announcements.speak(
@@ -621,6 +773,11 @@ class ModeBEngine(
 
         val scene =
             latestTrackedObjects
+
+        Log.d(
+            TAG,
+            "Scene size for READ command = ${scene.size}"
+        )
 
         announcements.announceRead(
             scene
