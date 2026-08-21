@@ -13,6 +13,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -296,8 +297,6 @@ class ObjectDetector(
     /**
      * Supports both common Ultralytics TFLite export conventions:
      * coordinates in 512-model pixels OR normalized 0..1 coordinates.
-     * The current model is logged at runtime so the chosen convention
-     * can be verified from Logcat.
      */
     private fun mapBoxToOriginalFrame(
         x1: Float,
