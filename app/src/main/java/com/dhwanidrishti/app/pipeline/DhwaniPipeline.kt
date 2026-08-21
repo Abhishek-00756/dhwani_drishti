@@ -4,9 +4,11 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
 
+import com.dhwanidrishti.app.audio.AnnouncementManager
 import com.dhwanidrishti.app.audio.SonificationEngine
 import com.dhwanidrishti.app.audio.TextReader
 import com.dhwanidrishti.app.calibration.CalibrationManager
+import com.dhwanidrishti.app.hyper.HyperEngine
 import com.dhwanidrishti.app.ml.DepthEstimator
 import com.dhwanidrishti.app.processing.ZoneDistances
 import com.dhwanidrishti.app.processing.ZoneProcessor
@@ -61,6 +63,22 @@ class DhwaniPipeline(
 
 
     // =========================================================
+    // HYPER ENGINE
+    // =========================================================
+
+    /**
+     * Hyper is deliberately independent from Soundscape and Narrated.
+     *
+     * It only keeps the newest frame while Hyper mode is active and
+     * contacts Gemini after an explicit visual question.
+     */
+    private val hyper =
+        HyperEngine(
+            AnnouncementManager(context)
+        )
+
+
+    // =========================================================
     // FRAME BUFFER
     // =========================================================
 
@@ -83,6 +101,9 @@ class DhwaniPipeline(
      * Soundscape and Narrated use the same depth inference
      * worker, but their processing branches are completely
      * separated.
+     *
+     * Hyper deliberately bypasses this inference work and
+     * only buffers the recent frame for on-demand Gemini calls.
      */
     private val inferenceExecutor =
         Executors.newSingleThreadExecutor()
@@ -143,10 +164,8 @@ class DhwaniPipeline(
     /**
      * Current application mode.
      *
-     * Only two modes exist:
-     *
-     * SOUNDSCAPE
-     * NARRATED
+     * SOUNDSCAPE and NARRATED retain their existing processing paths.
+     * HYPER is an independent on-demand visual reasoning mode.
      */
     @Volatile
     var mode: AppMode =
@@ -201,6 +220,21 @@ class DhwaniPipeline(
                     /**
                      * Narrated mode does not produce the
                      * continuous soundscape audio.
+                     */
+                    sonification.muted =
+                        true
+                }
+
+                AppMode.HYPER -> {
+
+                    Log.d(
+                        TAG,
+                        "HYPER MODE ACTIVATED"
+                    )
+
+                    /**
+                     * Hyper does not use the continuous soundscape.
+                     * It also does not run YOLO or MiDaS.
                      */
                     sonification.muted =
                         true
@@ -260,7 +294,7 @@ class DhwaniPipeline(
         /**
          * Start the soundscape engine.
          *
-         * It can be muted while Narrated mode is active.
+         * It can be muted while Narrated or Hyper mode is active.
          */
         sonification.start()
 
@@ -280,7 +314,8 @@ class DhwaniPipeline(
     /**
      * Called by CameraController.
      *
-     * Only the latest frame is retained.
+     * Only the latest frame is retained by the normal pipeline.
+     * Hyper receives its own copy only while Hyper mode is active.
      */
     fun submitFrame(
         bitmap: Bitmap
@@ -289,6 +324,12 @@ class DhwaniPipeline(
         latestFrame.set(
             bitmap
         )
+
+        if (mode == AppMode.HYPER) {
+            hyper.submitFrame(
+                bitmap
+            )
+        }
     }
 
 
@@ -339,9 +380,8 @@ class DhwaniPipeline(
      *
      * "Hey Dhwani, what's in front of me?"
      *
-     * This uses the latest tracked Narrated-mode scene.
-     *
-     * If Mode B has not been initialized yet, it is created.
+     * Narrated mode keeps its existing local YOLO answer.
+     * Hyper mode sends the latest frame to Gemini instead.
      */
     fun answerWhatIsInFront() {
 
@@ -349,6 +389,13 @@ class DhwaniPipeline(
             TAG,
             "Voice request: WHAT IS IN FRONT"
         )
+
+        if (mode == AppMode.HYPER) {
+            hyper.ask(
+                "What is in front of me?"
+            )
+            return
+        }
 
         modeBEngine()
             .answerWhatIsInFront()
@@ -364,11 +411,8 @@ class DhwaniPipeline(
     /**
      * Answers object-location questions.
      *
-     * Examples:
-     *
-     * "Where is the door?"
-     * "Where is the laptop?"
-     * "Where is the person?"
+     * Narrated mode keeps its existing local YOLO answer.
+     * Hyper mode uses Gemini's visual reasoning on the recent frame.
      */
     fun answerWhereIs(
         objectName: String
@@ -378,6 +422,13 @@ class DhwaniPipeline(
             TAG,
             "Location request: [$objectName]"
         )
+
+        if (mode == AppMode.HYPER) {
+            hyper.ask(
+                "Where is the $objectName?"
+            )
+            return
+        }
 
         modeBEngine()
             .answerWhereIs(
@@ -394,6 +445,8 @@ class DhwaniPipeline(
 
     /**
      * Schedules OCR on the next camera frame.
+     *
+     * This existing OCR behavior is retained in all modes.
      */
     fun answerRead() {
 
@@ -504,6 +557,58 @@ class DhwaniPipeline(
                         }
                     }
                 }
+            }
+
+
+            // =================================================
+            // HYPER MODE
+            // =================================================
+
+            /**
+             * Hyper is intentionally independent from the local
+             * perception pipeline.
+             *
+             * Do NOT run:
+             *
+             * - MiDaS
+             * - YOLO
+             * - depth normalization
+             * - tracking
+             * - risk evaluation
+             *
+             * The frame was already copied into HyperFrameBuffer
+             * from submitFrame(). Gemini runs only when a voice
+             * question calls answerWhatIsInFront()/answerWhereIs().
+             */
+            if (mode == AppMode.HYPER) {
+
+                sonification.muted =
+                    true
+
+                Log.d(
+                    TAG,
+                    "Processing HYPER frame: buffer only, no local inference"
+                )
+
+                stats.inferenceMs =
+                    0f
+
+                stats.processMs =
+                    0f
+
+                stats.totalMs =
+                    0f
+
+                stats.objectsTracked =
+                    0
+
+                stats.frames++
+
+                onStats(
+                    stats
+                )
+
+                continue
             }
 
 
@@ -731,6 +836,11 @@ class DhwaniPipeline(
                             frame
                         )
                 }
+
+                // HYPER is handled before depth estimation above.
+                AppMode.HYPER -> {
+                    // Intentionally unreachable.
+                }
             }
 
 
@@ -779,7 +889,7 @@ class DhwaniPipeline(
             /**
              * Only Narrated mode has tracked objects.
              *
-             * Soundscape therefore reports zero here.
+             * Soundscape and Hyper therefore report zero here.
              */
             stats.objectsTracked =
                 if (mode == AppMode.NARRATED) {
@@ -929,6 +1039,13 @@ class DhwaniPipeline(
         modeB =
             null
 
+
+        // -----------------------------------------------------
+        // Release Hyper
+        // -----------------------------------------------------
+
+        hyper.stop()
+
         Log.d(
             TAG,
             "DhwaniPipeline stopped"
@@ -978,7 +1095,27 @@ enum class AppMode {
      *   ↓
      * Voice
      */
-    NARRATED
+    NARRATED,
+
+
+    /**
+     * On-demand visual reasoning.
+     *
+     * Pipeline:
+     *
+     * Camera
+     *   ↓
+     * Latest-frame buffer
+     *   ↓
+     * User question
+     *   ↓
+     * Gemini Vision
+     *   ↓
+     * Voice
+     *
+     * No continuous YOLO or MiDaS inference.
+     */
+    HYPER
 }
 
 
