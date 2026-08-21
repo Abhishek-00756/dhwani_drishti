@@ -30,7 +30,8 @@ class HyperEngine(
     companion object {
         private const val TAG = "HYPER_MODE"
 
-        private const val CONTEXT = """
+        // trimIndent() is a runtime function, so this must be val, not const val.
+        private val CONTEXT = """
             You are Dhwani Hyper, an assistive visual reasoning assistant
             for a visually impaired user.
 
