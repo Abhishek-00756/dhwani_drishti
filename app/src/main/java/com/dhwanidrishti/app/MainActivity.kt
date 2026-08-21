@@ -588,6 +588,9 @@ class MainActivity : AppCompatActivity() {
                     AppMode.NARRATED
 
                 AppMode.NARRATED ->
+                    AppMode.HYPER
+
+                AppMode.HYPER ->
                     AppMode.SOUNDSCAPE
             }
 
@@ -608,9 +611,14 @@ class MainActivity : AppCompatActivity() {
                     getString(
                         R.string.mode_narrated_announcement
                     )
+
+                AppMode.HYPER ->
+                    "Hyper mode activated."
             }
         )
     }
+
+
     // =========================================================
     // REFRESH MODE LABEL
     // =========================================================
@@ -635,6 +643,9 @@ class MainActivity : AppCompatActivity() {
                     getString(
                         R.string.mode_narrated
                     )
+
+                AppMode.HYPER ->
+                    "Hyper"
             }
 
         modeToggle.text =
@@ -643,6 +654,7 @@ class MainActivity : AppCompatActivity() {
                 label
             )
     }
+
 
     // =========================================================
     // CALIBRATION
