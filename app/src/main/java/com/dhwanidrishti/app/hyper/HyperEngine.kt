@@ -7,6 +7,7 @@ import com.dhwanidrishti.app.gemini.GeminiVisionEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -64,6 +65,6 @@ class HyperEngine(
 
     fun stop() {
         frameBuffer.clear()
-        scope.coroutineContext.cancel()
+        scope.cancel()
     }
 }
