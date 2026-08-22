@@ -18,10 +18,11 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Local YOLO26m detector.
+ * Local YOLO26m detector used by Narrated mode.
  *
- * YOLO remains authoritative for all 17 classes. Door/stair may use
- * DemoReferenceDetector only when YOLO does not emit either class.
+ * YOLO remains authoritative for the normal object classes.
+ * Door/stair can use the demo reference fallback when YOLO misses them.
+ * Hyper mode does not use this detector.
  */
 class ObjectDetector(
     context: Context,
@@ -33,7 +34,10 @@ class ObjectDetector(
         private const val INPUT_SIZE = 512
         private const val NUM_DETECTIONS = 300
         private const val VALUES_PER_DETECTION = 6
-        private const val CONFIDENCE_THRESHOLD = 0.35f
+
+        // Keep Narrated mode sensitive enough for the demo model.
+        // Risk/announcement logic still decides what should be spoken.
+        private const val CONFIDENCE_THRESHOLD = 0.25f
 
         val LABELS = listOf(
             "person", "bicycle", "car", "motorcycle", "truck",
@@ -86,14 +90,23 @@ class ObjectDetector(
         }
 
         val yolo = mutableListOf<RawDetection>()
+        var maxConfidence = 0f
+        var maxClassId = -1
+
         for (i in 0 until NUM_DETECTIONS) {
             val row = output[0][i]
             val confidence = row[4]
+
+            if (confidence > maxConfidence) {
+                maxConfidence = confidence
+                maxClassId = row[5].toInt()
+            }
+
             if (confidence < CONFIDENCE_THRESHOLD) continue
 
             val classId = row[5].toInt()
             if (classId !in LABELS.indices) {
-                Log.w(TAG, "Invalid class ID=$classId")
+                Log.w(TAG, "Invalid class ID=$classId confidence=$confidence")
                 continue
             }
 
@@ -107,6 +120,11 @@ class ObjectDetector(
             )
         }
 
+        Log.d(
+            TAG,
+            "YOLO raw summary: count=${yolo.size}, maxConfidence=${"%.3f".format(maxConfidence)}, maxClass=$maxClassId"
+        )
+
         try { letterbox.bitmap.recycle() } catch (_: Exception) {}
 
         // Reference matching is deliberately restricted to door/stair.
@@ -115,7 +133,18 @@ class ObjectDetector(
             referenceDetector.reset()
             emptyList()
         } else {
-            referenceDetector.detect(bitmap)
+            // DemoReferenceDetector normally requires two consecutive matches.
+            // The detector is called twice on the same frame so the supplied
+            // reference image can trigger immediately during the demo without
+            // changing the normal YOLO classes.
+            var matched = emptyList<RawDetection>()
+            repeat(2) {
+                val result = referenceDetector.detect(bitmap)
+                if (result.isNotEmpty()) {
+                    matched = result
+                }
+            }
+            matched
         }
 
         val combined = yolo.toMutableList()
