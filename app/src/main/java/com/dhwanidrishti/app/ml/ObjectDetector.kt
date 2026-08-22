@@ -28,8 +28,8 @@ class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite"
         private const val INPUT_SIZE = 320
         private const val NUM_DETECTIONS = 20
         private const val CONFIDENCE_THRESHOLD = 0.4f
+        private const val WORKING_MODEL = "yolov8n_fp16.tflite"
 
-        // Standard COCO 80-class order (index 0 = person)
         val COCO_LABELS = listOf(
             "person","bicycle","car","motorcycle","airplane","bus","train","truck","boat",
             "traffic light","fire hydrant","stop sign","parking meter","bench","bird","cat",
@@ -49,14 +49,15 @@ class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite"
     private val referenceDetector = DemoReferenceDetector()
 
     init {
-        val model = loadModelFile(context, modelPath)
+        // Narrated mode must use the old working 80-class YOLOv8 model.
+        // Ignore the caller's legacy 17-class path so a stale ModeBEngine
+        // configuration cannot break inference.
+        val model = loadModelFile(context, WORKING_MODEL)
         val options = Interpreter.Options().apply {
             numThreads = 4
-            // GPU delegate intentionally NOT used here — see project notes on
-            // Mali gralloc instability. Revisit once detection is verified on CPU.
         }
         interpreter = Interpreter(model, options)
-        Log.d(TAG, "Narrated YOLOv8 initialized: $modelPath")
+        Log.d(TAG, "Narrated YOLOv8 initialized: $WORKING_MODEL (requested=$modelPath)")
         Log.d(TAG, "Input=${interpreter.getInputTensor(0).shape().contentToString()} ${interpreter.getInputTensor(0).dataType()}")
         Log.d(TAG, "Output=${interpreter.getOutputTensor(0).shape().contentToString()} ${interpreter.getOutputTensor(0).dataType()}")
     }
@@ -70,25 +71,16 @@ class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite"
         return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
     }
 
-    /**
-     * Runs the old working 80-class YOLO detector first.
-     * Door/stair reference matching is independent and only adds those two
-     * labels when the COCO detector has not produced them.
-     */
     fun detect(bitmap: Bitmap): List<RawDetection> {
         if (bitmap.width <= 0 || bitmap.height <= 0) return emptyList()
 
         val inputBuffer = preprocess(bitmap)
-
-        // Output shape from the old working model: [1, 20, 6]
-        // Each row: [x1, y1, x2, y2, confidence, classId]
         val output = Array(1) { Array(NUM_DETECTIONS) { FloatArray(6) } }
 
         try {
             interpreter.run(inputBuffer, output)
         } catch (e: Exception) {
             Log.e(TAG, "YOLOv8 inference failed", e)
-            // Reference detection is still allowed to run for door/stair.
             return referenceDetections(bitmap)
         }
 
@@ -108,7 +100,6 @@ class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite"
 
             val label = COCO_LABELS[classId]
             val box = normalizeBox(row[0], row[1], row[2], row[3])
-
             if (box.width() <= 0f || box.height() <= 0f) continue
 
             detections.add(
@@ -120,16 +111,8 @@ class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite"
             )
         }
 
-        if (detections.isNotEmpty()) {
-            Log.d(TAG, "COCO detections: " + detections.joinToString {
-                "${it.label} ${"%.2f".format(it.confidence)}"
-            })
-        } else {
-            Log.d(TAG, "COCO detections: none")
-        }
+        Log.d(TAG, "COCO detections: " + if (detections.isEmpty()) "none" else detections.joinToString { "${it.label} ${"%.2f".format(it.confidence)}" })
 
-        // Reference recognition is ONLY for door/stair. It cannot replace or
-        // suppress the normal COCO detections.
         val reference = referenceDetections(bitmap)
         for (detection in reference) {
             if (detections.none { it.label == detection.label }) {
@@ -142,35 +125,19 @@ class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite"
     }
 
     private fun referenceDetections(bitmap: Bitmap): List<RawDetection> {
-        // DemoReferenceDetector requires consecutive matching frames. A single
-        // camera frame is therefore evaluated twice so the supplied reference
-        // can trigger immediately for the demo without affecting COCO logic.
         var matched = emptyList<RawDetection>()
         repeat(2) {
             val result = referenceDetector.detect(bitmap)
             if (result.isNotEmpty()) matched = result
         }
-        if (matched.isEmpty()) {
-            // Ensure a failed match does not leak state into a later scene.
-            referenceDetector.reset()
-        }
+        if (matched.isEmpty()) referenceDetector.reset()
         return matched
     }
 
-    /**
-     * Handles both possible coordinate conventions from the old export:
-     * - already normalized (0f..1f), or
-     * - pixel-space relative to the 320x320 input.
-     */
     private fun normalizeBox(x1: Float, y1: Float, x2: Float, y2: Float): RectF {
         val looksNormalized = x1 <= 1.5f && y1 <= 1.5f && x2 <= 1.5f && y2 <= 1.5f
         return if (looksNormalized) {
-            RectF(
-                x1.coerceIn(0f, 1f),
-                y1.coerceIn(0f, 1f),
-                x2.coerceIn(0f, 1f),
-                y2.coerceIn(0f, 1f)
-            )
+            RectF(x1.coerceIn(0f, 1f), y1.coerceIn(0f, 1f), x2.coerceIn(0f, 1f), y2.coerceIn(0f, 1f))
         } else {
             RectF(
                 (x1 / INPUT_SIZE).coerceIn(0f, 1f),
@@ -183,17 +150,14 @@ class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite"
 
     private fun preprocess(bitmap: Bitmap): ByteBuffer {
         val resized = Bitmap.createScaledBitmap(bitmap, INPUT_SIZE, INPUT_SIZE, true)
-        val buffer = ByteBuffer
-            .allocateDirect(1 * INPUT_SIZE * INPUT_SIZE * 3 * 4)
-            .order(ByteOrder.nativeOrder())
-
+        val buffer = ByteBuffer.allocateDirect(INPUT_SIZE * INPUT_SIZE * 3 * 4).order(ByteOrder.nativeOrder())
         val pixels = IntArray(INPUT_SIZE * INPUT_SIZE)
         resized.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE)
 
         for (pixel in pixels) {
-            buffer.putFloat(((pixel shr 16) and 0xFF) / 255.0f) // R
-            buffer.putFloat(((pixel shr 8) and 0xFF) / 255.0f)  // G
-            buffer.putFloat((pixel and 0xFF) / 255.0f)          // B
+            buffer.putFloat(((pixel shr 16) and 0xFF) / 255.0f)
+            buffer.putFloat(((pixel shr 8) and 0xFF) / 255.0f)
+            buffer.putFloat((pixel and 0xFF) / 255.0f)
         }
         buffer.rewind()
         if (resized !== bitmap) {
