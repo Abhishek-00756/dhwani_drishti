@@ -126,17 +126,11 @@ class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite"
 
     private fun referenceDetections(bitmap: Bitmap): List<RawDetection> {
         return try {
-            var matched = emptyList<RawDetection>()
-            repeat(2) {
-                val result = referenceDetector.detect(bitmap)
-                if (result.isNotEmpty()) matched = result
-            }
-            if (matched.isEmpty()) referenceDetector.reset()
-            matched
+            // IMPORTANT: call once per camera frame. Calling twice here would
+            // turn the matcher's temporal confirmation into two observations
+            // of the same frame rather than two consecutive frames.
+            referenceDetector.detect(bitmap)
         } catch (e: Exception) {
-            // Reference matching must never take down the working COCO
-            // detector. A bad/missing demo reference simply means no
-            // door/stair result for this frame.
             Log.e(TAG, "Reference detector failed; keeping COCO detections", e)
             referenceDetector.reset()
             emptyList()
