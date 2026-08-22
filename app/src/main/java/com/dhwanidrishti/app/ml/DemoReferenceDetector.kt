@@ -71,11 +71,24 @@ class DemoReferenceDetector {
 
     private fun unpack(label: String, encoded: String): List<Reference> {
         val bytes = Base64.decode(encoded, Base64.DEFAULT)
-        require(bytes.size % SIGNATURE_SIZE == 0) {
-            "Invalid $label signature block size=${bytes.size}"
+
+        val completeCount = bytes.size / SIGNATURE_SIZE
+        val remainder = bytes.size % SIGNATURE_SIZE
+
+        if (remainder != 0) {
+            Log.w(
+                TAG,
+                "Ignoring $remainder trailing bytes in $label signature block " +
+                        "(decoded=${bytes.size}, block=$SIGNATURE_SIZE)"
+            )
         }
-        return (0 until bytes.size step SIGNATURE_SIZE).map { start ->
-            Reference(label, bytes.copyOfRange(start, start + SIGNATURE_SIZE))
+
+        return (0 until completeCount).map { index ->
+            val start = index * SIGNATURE_SIZE
+            Reference(
+                label,
+                bytes.copyOfRange(start, start + SIGNATURE_SIZE)
+            )
         }
     }
 
