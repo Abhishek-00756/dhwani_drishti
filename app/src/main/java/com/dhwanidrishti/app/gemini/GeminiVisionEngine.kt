@@ -59,87 +59,90 @@ class GeminiVisionEngine {
         bitmap: Bitmap,
         userQuestion: String
     ): Result<String> = withContext(Dispatchers.IO) {
-
         try {
             val apiKey = BuildConfig.GEMINI_API_KEY.trim()
 
             if (apiKey.isBlank()) {
-                return@withContext Result.failure(
+                Result.failure<String>(
                     IllegalStateException(
                         "GEMINI_API_KEY is missing. " +
                                 "Add it to local.properties and sync Gradle."
                     )
                 )
-            }
+            } else {
+                Log.d(TAG, "Preparing image for Gemini")
 
-            Log.d(TAG, "Preparing image for Gemini")
-
-            val imageBase64 = bitmapToBase64(bitmap)
-
-            Log.d(
-                TAG,
-                "Image encoded successfully. Base64 size=${imageBase64.length}"
-            )
-
-            val requestJson = buildRequestJson(
-                userQuestion = userQuestion,
-                imageBase64 = imageBase64
-            )
-
-            val url = "$BASE_URL$MODEL:generateContent"
-
-            val mediaType = "application/json; charset=utf-8".toMediaType()
-            val requestBody = requestJson
-                .toString()
-                .toRequestBody(mediaType)
-
-            val request = Request.Builder()
-                .url(url)
-                .post(requestBody)
-                .addHeader("Content-Type", "application/json")
-                .addHeader("x-goog-api-key", apiKey)
-                .build()
-
-            var attempt = 0
-
-            while (true) {
-                attempt++
+                val imageBase64 = bitmapToBase64(bitmap)
 
                 Log.d(
                     TAG,
-                    "Sending Gemini request: model=$MODEL apiVersion=v1beta " +
-                            "attempt=$attempt/$MAX_RETRIES"
+                    "Image encoded successfully. Base64 size=${imageBase64.length}"
                 )
 
-                val result = executeRequest(request)
-
-                if (result.isSuccess) {
-                    return@withContext result
-                }
-
-                val error = result.exceptionOrNull()
-
-                if (error !is GeminiHttpException ||
-                    !isRetryableStatus(error.statusCode) ||
-                    attempt >= MAX_RETRIES
-                ) {
-                    return@withContext result
-                }
-
-                val backoff = calculateBackoff(attempt)
-
-                Log.w(
-                    TAG,
-                    "Transient Gemini error ${error.statusCode}. " +
-                            "Retrying in ${backoff}ms"
+                val requestJson = buildRequestJson(
+                    userQuestion = userQuestion,
+                    imageBase64 = imageBase64
                 )
 
-                delay(backoff)
+                val url = "$BASE_URL$MODEL:generateContent"
+
+                val mediaType = "application/json; charset=utf-8".toMediaType()
+                val requestBody = requestJson
+                    .toString()
+                    .toRequestBody(mediaType)
+
+                val request = Request.Builder()
+                    .url(url)
+                    .post(requestBody)
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("x-goog-api-key", apiKey)
+                    .build()
+
+                var attempt = 0
+                var lastResult: Result<String> =
+                    Result.failure(RuntimeException("Gemini request did not run"))
+
+                while (attempt < MAX_RETRIES) {
+                    attempt++
+
+                    Log.d(
+                        TAG,
+                        "Sending Gemini request: model=$MODEL apiVersion=v1beta " +
+                                "attempt=$attempt/$MAX_RETRIES"
+                    )
+
+                    val result = executeRequest(request)
+                    lastResult = result
+
+                    if (result.isSuccess) {
+                        break
+                    }
+
+                    val error = result.exceptionOrNull()
+
+                    if (error !is GeminiHttpException ||
+                        !isRetryableStatus(error.statusCode) ||
+                        attempt >= MAX_RETRIES
+                    ) {
+                        break
+                    }
+
+                    val backoff = calculateBackoff(attempt)
+
+                    Log.w(
+                        TAG,
+                        "Transient Gemini error ${error.statusCode}. " +
+                                "Retrying in ${backoff}ms"
+                    )
+
+                    delay(backoff)
+                }
+
+                lastResult
             }
-
         } catch (e: Exception) {
             Log.e(TAG, "Gemini analysis failed", e)
-            Result.failure(e)
+            Result.failure<String>(e)
         }
     }
 
