@@ -43,7 +43,6 @@ class VoiceCommandManager(
     }
 
     private val handler = Handler(Looper.getMainLooper())
-
     private var speechRecognizer: SpeechRecognizer? = null
 
     @Volatile
@@ -90,7 +89,6 @@ class VoiceCommandManager(
         speechRecognizer?.destroy()
 
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
-
         speechRecognizer?.setRecognitionListener(
             object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
@@ -102,9 +100,7 @@ class VoiceCommandManager(
                 }
 
                 override fun onRmsChanged(rmsdB: Float) {
-                    if (rmsdB > -5f) {
-                        Log.d(TAG, "MIC RMS = $rmsdB")
-                    }
+                    if (rmsdB > -5f) Log.d(TAG, "MIC RMS = $rmsdB")
                 }
 
                 override fun onBufferReceived(buffer: ByteArray?) = Unit
@@ -129,14 +125,14 @@ class VoiceCommandManager(
 
                     Log.d(TAG, "FINAL RESULTS = $matches")
 
-                    matches?.forEach { text ->
-                        Log.d(TAG, "Recognized text: [$text]")
-                        if (handleCommand(text)) return@forEach
+                    if (!matches.isNullOrEmpty()) {
+                        for (text in matches) {
+                            Log.d(TAG, "Recognized text: [$text]")
+                            if (handleCommand(text)) break
+                        }
                     }
 
-                    if (!commandTriggered) {
-                        scheduleRestart()
-                    }
+                    if (!commandTriggered) scheduleRestart()
                 }
 
                 override fun onPartialResults(partialResults: Bundle?) {
@@ -144,10 +140,10 @@ class VoiceCommandManager(
                         SpeechRecognizer.RESULTS_RECOGNITION
                     )
 
-                    Log.d(TAG, "PARTIAL RESULTS = $matches")
-
-                    matches?.forEach { text ->
-                        if (handleCommand(text)) return@forEach
+                    if (!matches.isNullOrEmpty()) {
+                        for (text in matches) {
+                            if (handleCommand(text)) break
+                        }
                     }
                 }
 
@@ -161,9 +157,7 @@ class VoiceCommandManager(
     private fun startListeningInternal() {
         if (!listening) return
 
-        if (speechRecognizer == null) {
-            createRecognizer()
-        }
+        if (speechRecognizer == null) createRecognizer()
 
         val permission = ContextCompat.checkSelfPermission(
             context,
@@ -183,10 +177,7 @@ class VoiceCommandManager(
                     RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                     RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
                 )
-                putExtra(
-                    RecognizerIntent.EXTRA_LANGUAGE,
-                    Locale.getDefault()
-                )
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
                 putExtra(
                     RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE,
                     Locale.getDefault()
@@ -221,17 +212,11 @@ class VoiceCommandManager(
 
     private fun handleCommand(originalText: String): Boolean {
         val normalized = normalizeText(originalText)
-
         if (normalized.isBlank()) return false
 
         Log.d(TAG, "Checking command: [$normalized]")
 
-        // ---------------------------------------------------------
-        // STOP READING
-        // ---------------------------------------------------------
-        // This check intentionally happens before commandTriggered and
-        // before wake-word validation. The user must be able to say simply
-        // "stop" while Dhwani is already speaking.
+        // Stop is checked before commandTriggered and before wake-word validation.
         if (isStopReadingCommand(normalized)) {
             Log.d(TAG, "STOP READING COMMAND MATCHED")
             triggerStopReading()
@@ -243,16 +228,12 @@ class VoiceCommandManager(
             return true
         }
 
-        if (!containsWakeWord(normalized)) {
-            return false
-        }
+        if (!containsWakeWord(normalized)) return false
 
         val commandPart = removeWakeWords(normalized)
         Log.d(TAG, "Command after wake word removal: [$commandPart]")
-
         if (commandPart.isBlank()) return false
 
-        // Location commands must be checked before generic front commands.
         val objectName = extractLocateObject(commandPart)
         if (objectName != null) {
             Log.d(TAG, "LOCATE OBJECT COMMAND MATCHED: [$objectName]")
@@ -289,19 +270,16 @@ class VoiceCommandManager(
             "hi dhwani", "hi dhvani", "hi dhvni", "hi dhoni",
             "dhwani", "dhvani", "dhvni", "dhoni"
         )
-
         return wakeWords.any { normalized.contains(it) }
     }
 
     private fun removeWakeWords(text: String): String {
         var result = text
 
-        val wakePhrases = listOf(
+        listOf(
             "hey dhwani", "hey dhvani", "hey dhvni", "hey dhoni",
             "hi dhwani", "hi dhvani", "hi dhvni", "hi dhoni"
-        )
-
-        wakePhrases.forEach { phrase ->
+        ).forEach { phrase ->
             result = result.replace(phrase, " ")
         }
 
@@ -314,7 +292,6 @@ class VoiceCommandManager(
 
     private fun isStopReadingCommand(command: String): Boolean {
         val value = command.trim()
-
         return value == "stop" ||
                 value == "please stop" ||
                 value == "stop read" ||
@@ -328,13 +305,12 @@ class VoiceCommandManager(
     private fun isReadCommand(commandPart: String): Boolean {
         val command = commandPart.trim()
 
-        if (command == "read" ||
+        if (
+            command == "read" ||
             command == "read this" ||
             command == "read it" ||
             command == "please read"
-        ) {
-            return true
-        }
+        ) return true
 
         return command.startsWith("read this ") ||
                 command.startsWith("read it ") ||
@@ -344,7 +320,6 @@ class VoiceCommandManager(
 
     private fun isWhatIsInFrontCommand(commandPart: String): Boolean {
         val command = commandPart.trim()
-
         return command.contains("what s in front of me") ||
                 command.contains("whats in front of me") ||
                 command.contains("what is in front of me") ||
@@ -381,21 +356,14 @@ class VoiceCommandManager(
             Regex("^show me where (?:the |a |an )?(.+) is$")
         )
 
-        patterns.forEach { pattern ->
-            val match = pattern.find(command) ?: return@forEach
+        for (pattern in patterns) {
+            val match = pattern.find(command) ?: continue
             val objectName = cleanObjectName(match.groupValues[1])
-            if (objectName.isNotBlank()) {
-                throw LocateObjectFound(objectName)
-            }
+            if (objectName.isNotBlank()) return objectName
         }
 
         return null
     }
-
-    /** Internal control-flow exception used only to exit the pattern scan. */
-    private class LocateObjectFound(
-        val objectName: String
-    ) : RuntimeException()
 
     private fun cleanObjectName(text: String): String {
         return text
@@ -436,7 +404,6 @@ class VoiceCommandManager(
         commandTriggered = true
         lastCommandTime = System.currentTimeMillis()
 
-        Log.d(TAG, "================================")
         Log.d(TAG, "READ COMMAND TRIGGERED")
 
         try {
@@ -504,12 +471,10 @@ class VoiceCommandManager(
 
     private fun canTriggerCommand(): Boolean {
         val now = System.currentTimeMillis()
-
         if (now - lastCommandTime < COMMAND_COOLDOWN_MS) {
             Log.d(TAG, "Ignoring duplicate command")
             return false
         }
-
         return true
     }
 
@@ -517,7 +482,6 @@ class VoiceCommandManager(
         handler.postDelayed(
             {
                 commandTriggered = false
-
                 if (listening) {
                     Log.d(TAG, "Command cooldown finished")
                     scheduleRestart()
@@ -529,7 +493,6 @@ class VoiceCommandManager(
 
     private fun scheduleRestart(delayMs: Long = RESTART_DELAY_MS) {
         if (!listening) return
-
         handler.removeCallbacks(restartRunnable)
         handler.postDelayed(restartRunnable, delayMs)
     }
@@ -555,7 +518,6 @@ class VoiceCommandManager(
         listening = false
         commandTriggered = false
 
-        handler.removeCallbacks(restartRunnable)
         handler.removeCallbacksAndMessages(null)
 
         try {
