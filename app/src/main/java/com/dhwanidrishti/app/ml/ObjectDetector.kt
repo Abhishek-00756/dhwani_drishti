@@ -18,8 +18,8 @@ import java.nio.channels.FileChannel
  * IMPORTANT: this intentionally restores the previously working 80-class
  * YOLOv8 model. Hyper mode does not use this detector.
  *
- * Door/stair/pothole are not COCO classes, so they are handled separately by
- * demo reference detectors using the supplied reference images.
+ * Door/stair are handled separately by the demo reference detector using
+ * the supplied reference images.
  */
 class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite") {
 
@@ -47,7 +47,6 @@ class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite"
 
     private val interpreter: Interpreter
     private val referenceDetector = DemoReferenceDetector()
-    private val potholeReferenceDetector = PotholeReferenceDetector()
 
     init {
         // Narrated mode must use the old working 80-class YOLOv8 model.
@@ -129,19 +128,11 @@ class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite"
         val detections = mutableListOf<RawDetection>()
 
         try {
-            // IMPORTANT: call each reference matcher once per camera frame.
-            // This preserves their two-consecutive-frame confirmation logic.
+            // Call the door/stair reference matcher once per camera frame.
             detections += referenceDetector.detect(bitmap)
         } catch (e: Exception) {
             Log.e(TAG, "Door/stair reference detector failed; keeping COCO detections", e)
             referenceDetector.reset()
-        }
-
-        try {
-            detections += potholeReferenceDetector.detect(bitmap)
-        } catch (e: Exception) {
-            Log.e(TAG, "Pothole reference detector failed; keeping other detections", e)
-            potholeReferenceDetector.reset()
         }
 
         return detections.distinctBy { it.label }
