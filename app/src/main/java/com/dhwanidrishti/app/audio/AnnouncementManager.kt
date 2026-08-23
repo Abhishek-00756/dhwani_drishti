@@ -10,14 +10,15 @@ import android.util.Log
 import com.dhwanidrishti.app.processing.ObjectTracker
 import com.dhwanidrishti.app.processing.Zone
 import java.util.Locale
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Handles spoken output for Dhwani Drishti.
  *
- * The existing narrated behavior is preserved for normal YOLO objects.
- * Door and stair are special demo classes: when detected by YOLO or the
- * demo reference fallback, they are announced regardless of estimated
- * depth because the demo needs reliable automatic warnings.
+ * Door and stair remain demo-critical objects and are announced regardless
+ * of estimated depth. This class also owns the application's TTS instances
+ * and provides a global stop operation so voice commands can interrupt
+ * currently playing speech.
  */
 class AnnouncementManager(
     context: Context
@@ -30,6 +31,22 @@ class AnnouncementManager(
         const val COOLDOWN_MS = 6000L
         const val MAX_COOLDOWN_ENTRIES = 200
         const val COMMAND_SPEECH_COOLDOWN_MS = 700L
+
+        private const val STOP_SUPPRESSION_MS = 2500L
+        private val instances = CopyOnWriteArrayList<AnnouncementManager>()
+
+        /**
+         * Immediately stops every Dhwani TTS instance.
+         *
+         * This is intentionally global because Narrated and Hyper each own
+         * their own AnnouncementManager instance.
+         */
+        fun stopAllSpeech() {
+            Log.d(TAG, "GLOBAL STOP SPEECH")
+            instances.forEach { manager ->
+                manager.stopSpeech()
+            }
+        }
     }
 
     private val tts: TextToSpeech
@@ -47,6 +64,9 @@ class AnnouncementManager(
 
     @Volatile
     private var currentUtteranceId: String? = null
+
+    @Volatile
+    private var speechSuppressedUntil = 0L
 
     private val lastAnnounced = mutableMapOf<Int, Long>()
 
@@ -107,17 +127,27 @@ class AnnouncementManager(
                             Log.e(TAG, "TTS ERROR: $utteranceId")
                         }
                     }
+
+                    override fun onStop(
+                        utteranceId: String?,
+                        interrupted: Boolean
+                    ) {
+                        if (utteranceId == currentUtteranceId) {
+                            isSpeaking = false
+                            commandSpeechActive = false
+                            Log.d(
+                                TAG,
+                                "TTS STOP: $utteranceId interrupted=$interrupted"
+                            )
+                        }
+                    }
                 }
             )
         }
+
+        instances.add(this)
     }
 
-    /**
-     * Automatic obstacle announcements.
-     *
-     * Normal YOLO classes retain the existing proximity/approaching rules.
-     * Door and stair bypass those rules and are announced immediately.
-     */
     fun evaluate(
         tracked: List<ObjectTracker.TrackedObject>,
         tracker: ObjectTracker
@@ -286,7 +316,30 @@ class AnnouncementManager(
         speakCommand(phrase)
     }
 
+    /** Immediately interrupts current speech and briefly suppresses stale output. */
+    fun stopSpeech() {
+        speechSuppressedUntil = System.currentTimeMillis() + STOP_SUPPRESSION_MS
+        currentUtteranceId = null
+        isSpeaking = false
+        commandSpeechActive = false
+
+        try {
+            tts.stop()
+        } catch (e: Exception) {
+            Log.e(TAG, "TTS stop failed", e)
+        }
+    }
+
+    private fun speechIsSuppressed(): Boolean {
+        return System.currentTimeMillis() < speechSuppressedUntil
+    }
+
     private fun canStartCommandSpeech(): Boolean {
+        if (speechIsSuppressed()) {
+            Log.d(TAG, "Command speech suppressed after stop")
+            return false
+        }
+
         val now = System.currentTimeMillis()
         if (now - lastCommandSpeechTime < COMMAND_SPEECH_COOLDOWN_MS) {
             Log.d(TAG, "Command speech ignored because of cooldown")
@@ -297,7 +350,7 @@ class AnnouncementManager(
     }
 
     private fun speakCommand(phrase: String) {
-        if (phrase.isBlank()) return
+        if (phrase.isBlank() || speechIsSuppressed()) return
 
         val utteranceId = "dhwani_command_${System.nanoTime()}"
         currentUtteranceId = utteranceId
@@ -322,7 +375,7 @@ class AnnouncementManager(
     }
 
     private fun speakAutomatic(phrase: String) {
-        if (phrase.isBlank() || commandSpeechActive) return
+        if (phrase.isBlank() || commandSpeechActive || speechIsSuppressed()) return
 
         val utteranceId = "dhwani_auto_${System.nanoTime()}"
         currentUtteranceId = utteranceId
@@ -350,7 +403,6 @@ class AnnouncementManager(
         val label = friendlyLabel(obj.label)
         val zone = Zone.fromNormalizedX(obj.lastCentroid.x)
 
-        // Demo-critical objects intentionally use simple spatial speech.
         if (isDoorOrStair(obj.label)) {
             return if (zone == Zone.CENTER) {
                 "$label is in front of you."
@@ -439,6 +491,7 @@ class AnnouncementManager(
 
     fun shutdown() {
         Log.d(TAG, "Shutting down TTS")
+        instances.remove(this)
         try {
             mainHandler.removeCallbacksAndMessages(null)
             tts.stop()
