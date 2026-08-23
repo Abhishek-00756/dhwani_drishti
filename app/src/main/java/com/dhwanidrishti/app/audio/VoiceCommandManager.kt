@@ -51,6 +51,13 @@ class VoiceCommandManager(
     @Volatile
     private var commandTriggered = false
 
+    /**
+     * While reading, keep recognition sessions cycling so a plain "stop"
+     * can be heard even when the read response is several seconds long.
+     */
+    @Volatile
+    private var keepListeningForStop = false
+
     private var lastCommandTime = 0L
 
     private val restartRunnable = Runnable {
@@ -81,6 +88,7 @@ class VoiceCommandManager(
         }
 
         listening = true
+        keepListeningForStop = false
         createRecognizer()
         startListeningInternal()
     }
@@ -115,7 +123,9 @@ class VoiceCommandManager(
                         "SpeechRecognizer ERROR = $error (${errorToString(error)})"
                     )
                     commandTriggered = false
-                    scheduleRestart()
+                    scheduleRestart(
+                        if (keepListeningForStop) READ_RESTART_DELAY_MS else RESTART_DELAY_MS
+                    )
                 }
 
                 override fun onResults(results: Bundle?) {
@@ -132,7 +142,15 @@ class VoiceCommandManager(
                         }
                     }
 
-                    if (!commandTriggered) scheduleRestart()
+                    // Android requires waiting for onResults/onError before
+                    // starting the next recognition session. During a read,
+                    // keep cycling sessions so "stop" remains available.
+                    if (keepListeningForStop || !commandTriggered) {
+                        scheduleRestart(
+                            if (keepListeningForStop) READ_RESTART_DELAY_MS
+                            else RESTART_DELAY_MS
+                        )
+                    }
                 }
 
                 override fun onPartialResults(partialResults: Bundle?) {
@@ -298,6 +316,10 @@ class VoiceCommandManager(
                 value == "stop reading" ||
                 value == "please stop read" ||
                 value == "please stop reading" ||
+                value == "stop the reading" ||
+                value == "please stop the reading" ||
+                value == "stop reading now" ||
+                value == "stop read now" ||
                 value.startsWith("stop reading ") ||
                 value.startsWith("stop read ")
     }
@@ -385,6 +407,12 @@ class VoiceCommandManager(
 
         lastCommandTime = System.currentTimeMillis()
         commandTriggered = false
+        keepListeningForStop = false
+
+        // Cancel any pending read-session restart before stopping the current
+        // recognition session. A new session is scheduled below only after
+        // the recognizer has accepted the stop request.
+        handler.removeCallbacks(restartRunnable)
 
         try {
             speechRecognizer?.stopListening()
@@ -403,23 +431,23 @@ class VoiceCommandManager(
 
         commandTriggered = true
         lastCommandTime = System.currentTimeMillis()
+        keepListeningForStop = true
 
         Log.d(TAG, "READ COMMAND TRIGGERED")
 
-        try {
-            speechRecognizer?.stopListening()
-        } catch (e: Exception) {
-            Log.e(TAG, "Error stopping recognizer", e)
-        }
-
+        // IMPORTANT: do NOT stop the recognizer here. The old implementation
+        // stopped recognition and attempted to restart it immediately, which
+        // could leave the SpeechRecognizer between sessions while TTS was
+        // speaking. We keep recognition alive and restart it only from
+        // onResults/onError, as required by Android's SpeechRecognizer API.
         try {
             onRead()
         } catch (e: Exception) {
             Log.e(TAG, "ERROR inside onRead()", e)
         }
 
-        // Restart early so a plain "stop" can interrupt a long OCR result.
-        scheduleRestart(READ_RESTART_DELAY_MS)
+        // If the current recognition session finishes, onResults/onError will
+        // start another one because keepListeningForStop is true.
         resetCommandAfterCooldown()
     }
 
@@ -428,6 +456,7 @@ class VoiceCommandManager(
 
         commandTriggered = true
         lastCommandTime = System.currentTimeMillis()
+        keepListeningForStop = false
 
         Log.d(TAG, "WHAT IS IN FRONT TRIGGERED")
 
@@ -451,6 +480,7 @@ class VoiceCommandManager(
 
         commandTriggered = true
         lastCommandTime = System.currentTimeMillis()
+        keepListeningForStop = false
 
         Log.d(TAG, "LOCATE OBJECT TRIGGERED: [$objectName]")
 
@@ -484,7 +514,9 @@ class VoiceCommandManager(
                 commandTriggered = false
                 if (listening) {
                     Log.d(TAG, "Command cooldown finished")
-                    scheduleRestart()
+                    scheduleRestart(
+                        if (keepListeningForStop) READ_RESTART_DELAY_MS else RESTART_DELAY_MS
+                    )
                 }
             },
             COMMAND_COOLDOWN_MS
@@ -517,6 +549,7 @@ class VoiceCommandManager(
 
         listening = false
         commandTriggered = false
+        keepListeningForStop = false
 
         handler.removeCallbacksAndMessages(null)
 
