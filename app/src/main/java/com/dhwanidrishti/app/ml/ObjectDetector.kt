@@ -18,8 +18,8 @@ import java.nio.channels.FileChannel
  * IMPORTANT: this intentionally restores the previously working 80-class
  * YOLOv8 model. Hyper mode does not use this detector.
  *
- * Door and stair are not COCO classes, so they are handled separately by
- * DemoReferenceDetector using the supplied demo reference images.
+ * Door/stair/pothole are not COCO classes, so they are handled separately by
+ * demo reference detectors using the supplied reference images.
  */
 class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite") {
 
@@ -47,6 +47,7 @@ class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite"
 
     private val interpreter: Interpreter
     private val referenceDetector = DemoReferenceDetector()
+    private val potholeReferenceDetector = PotholeReferenceDetector()
 
     init {
         // Narrated mode must use the old working 80-class YOLOv8 model.
@@ -125,16 +126,25 @@ class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite"
     }
 
     private fun referenceDetections(bitmap: Bitmap): List<RawDetection> {
-        return try {
-            // IMPORTANT: call once per camera frame. Calling twice here would
-            // turn the matcher's temporal confirmation into two observations
-            // of the same frame rather than two consecutive frames.
-            referenceDetector.detect(bitmap)
+        val detections = mutableListOf<RawDetection>()
+
+        try {
+            // IMPORTANT: call each reference matcher once per camera frame.
+            // This preserves their two-consecutive-frame confirmation logic.
+            detections += referenceDetector.detect(bitmap)
         } catch (e: Exception) {
-            Log.e(TAG, "Reference detector failed; keeping COCO detections", e)
+            Log.e(TAG, "Door/stair reference detector failed; keeping COCO detections", e)
             referenceDetector.reset()
-            emptyList()
         }
+
+        try {
+            detections += potholeReferenceDetector.detect(bitmap)
+        } catch (e: Exception) {
+            Log.e(TAG, "Pothole reference detector failed; keeping other detections", e)
+            potholeReferenceDetector.reset()
+        }
+
+        return detections.distinctBy { it.label }
     }
 
     private fun normalizeBox(x1: Float, y1: Float, x2: Float, y2: Float): RectF {
