@@ -15,11 +15,9 @@ import java.nio.channels.FileChannel
 /**
  * Local YOLO detector used by Narrated mode.
  *
- * IMPORTANT: this intentionally restores the previously working 80-class
- * YOLOv8 model. Hyper mode does not use this detector.
- *
- * Door/stair are handled separately by the demo reference detector using
- * the supplied reference images.
+ * This detector uses the 80-class YOLOv8 model directly. No demo/reference
+ * image matching is performed here; door and stair detections come only from
+ * the model itself when those classes are available.
  */
 class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite") {
 
@@ -46,7 +44,6 @@ class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite"
     }
 
     private val interpreter: Interpreter
-    private val referenceDetector = DemoReferenceDetector()
 
     init {
         // Narrated mode must use the old working 80-class YOLOv8 model.
@@ -81,7 +78,7 @@ class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite"
             interpreter.run(inputBuffer, output)
         } catch (e: Exception) {
             Log.e(TAG, "YOLOv8 inference failed", e)
-            return referenceDetections(bitmap)
+            return emptyList()
         }
 
         Log.d(TAG, "raw row0: ${output[0][0].joinToString()}")
@@ -113,29 +110,7 @@ class ObjectDetector(context: Context, modelPath: String = "yolov8n_fp16.tflite"
 
         Log.d(TAG, "COCO detections: " + if (detections.isEmpty()) "none" else detections.joinToString { "${it.label} ${"%.2f".format(it.confidence)}" })
 
-        val reference = referenceDetections(bitmap)
-        for (detection in reference) {
-            if (detections.none { it.label == detection.label }) {
-                detections.add(detection)
-                Log.d(TAG, "REFERENCE detection: ${detection.label}")
-            }
-        }
-
         return detections
-    }
-
-    private fun referenceDetections(bitmap: Bitmap): List<RawDetection> {
-        val detections = mutableListOf<RawDetection>()
-
-        try {
-            // Call the door/stair reference matcher once per camera frame.
-            detections += referenceDetector.detect(bitmap)
-        } catch (e: Exception) {
-            Log.e(TAG, "Door/stair reference detector failed; keeping COCO detections", e)
-            referenceDetector.reset()
-        }
-
-        return detections.distinctBy { it.label }
     }
 
     private fun normalizeBox(x1: Float, y1: Float, x2: Float, y2: Float): RectF {
