@@ -1,1097 +1,841 @@
 # Dhwani Drishti
 
-> An AI-powered assistive vision system designed to help visually impaired users understand their surroundings through object detection, depth estimation, spatial audio, voice interaction, and spoken navigation assistance.
+> An on-device AI assistive vision system that converts a smartphone camera view into spoken and spatial-audio information for visually impaired users.
+
+Dhwani Drishti is an Android application designed to improve independent environmental awareness through **real-time object detection, monocular depth estimation, spatial reasoning, object tracking, risk prioritization, OCR, voice commands, and audio feedback**.
+
+The current main branch is built around a lightweight **YOLOv8n 80-class object detector** and **MiDaS Small relative-depth estimation**, with the processing performed locally on the Android device.
 
 ---
 
-## Overview
+## Table of Contents
 
-**Dhwani Drishti** is an Android-based assistive vision application that combines computer vision, depth estimation, object tracking, risk analysis, OCR, speech recognition, and text-to-speech to provide real-time environmental awareness.
-
-The system is designed around two primary operating modes:
-
-1. **Soundscape Mode** – communicates the surrounding spatial structure through directional audio.
-2. **Narrated Mode** – detects objects and provides spoken descriptions, warnings, and object-location information.
-
-The goal is to provide useful environmental information without requiring the user to continuously look at a screen.
+- [Why Dhwani Drishti](#why-dhwani-drishti)
+- [Current Capabilities](#current-capabilities)
+- [System Architecture](#system-architecture)
+- [Operating Modes](#operating-modes)
+- [Object Detection](#object-detection)
+- [Depth Estimation](#depth-estimation)
+- [Depth and Object Fusion](#depth-and-object-fusion)
+- [Spatial Zones](#spatial-zones)
+- [Object Tracking](#object-tracking)
+- [Risk Engine](#risk-engine)
+- [Automatic Voice Announcements](#automatic-voice-announcements)
+- [Voice Interaction](#voice-interaction)
+- [OCR / Read Mode](#ocr--read-mode)
+- [Soundscape Mode](#soundscape-mode)
+- [Depth Calibration](#depth-calibration)
+- [Camera Pipeline](#camera-pipeline)
+- [Technology Stack](#technology-stack)
+- [Project Structure](#project-structure)
+- [Model Assets](#model-assets)
+- [Installation and Development](#installation-and-development)
+- [Current Status](#current-status)
+- [Limitations](#limitations)
+- [Future Roadmap](#future-roadmap)
 
 ---
 
-# Features
+## Why Dhwani Drishti
 
-## 1. Soundscape Mode
+A conventional object-detection application can answer:
 
-Soundscape Mode provides spatial awareness using the camera and depth estimation pipeline.
+> **What object is visible?**
 
-The environment is divided into spatial zones:
+For an assistive mobility system, that information alone is often insufficient. The user may also need to know:
+
+- **Where is the object?**
+- **How close is it relative to the current scene?**
+- **Is it getting closer?**
+- **Should it be prioritized as a potential hazard?**
+- **Can the information be communicated without requiring the user to look at a screen?**
+
+Dhwani Drishti combines these layers into a single audio-first pipeline:
 
 ```text
-             CAMERA VIEW
+Camera
+  ↓
+Object Detection + Depth Estimation
+  ↓
+Depth / Object Fusion
+  ↓
+Spatial Reasoning
+  ↓
+Temporal Tracking
+  ↓
+Risk Prioritization
+  ↓
+Speech / Spatial Audio
+```
 
-        LEFT   CENTER   RIGHT
-          ↓       ↓       ↓
+The goal is not simply to recognize objects, but to turn visual information into information that can be consumed through hearing.
 
-        ┌─────────────────────┐
-        │         │           │
-        │   L     │    R      │
-        │         │           │
-        │─────────┼───────────│
-        │         │           │
-        └─────────────────────┘
+---
 
+## Current Capabilities
 
-Depth information is converted into directional audio cues.
+The current main branch implements:
 
-The user can therefore understand whether an obstacle is:
+- Real-time CameraX camera input
+- YOLOv8n object detection
+- 80-class COCO label mapping inside the active detector
+- MiDaS Small monocular relative-depth estimation
+- Depth/object fusion
+- Left / center / right spatial reasoning
+- Lightweight multi-frame object tracking
+- Relative proximity categories
+- Approaching / moving-away estimation
+- Object movement direction estimation
+- Heuristic risk scoring
+- Automatic spoken warnings
+- Narrated scene descriptions
+- Voice-command interaction
+- Object-location queries such as locating a detected object
+- OCR using Google ML Kit Text Recognition
+- Android Text-to-Speech output
+- Continuous stereo Soundscape Mode
+- Near/far depth calibration
+- On-device AI inference with CPU and GPU-supported components where available
 
-To the left
-In front
-To the right
-Near
-Far
-2. Narrated Mode
+The application currently has **two operating modes**:
 
-Narrated Mode combines multiple AI components:
+1. **Soundscape Mode**
+2. **Narrated Mode**
 
-Camera Frame
-     │
-     ▼
-MiDaS Depth Estimation
-     │
-     ├───────────────────┐
-     │                   │
-     ▼                   ▼
-Depth Map            YOLO26m
-                         │
-                         ▼
-                  Object Detection
-                         │
-                         ▼
-                  Depth Fusion
-                         │
-                         ▼
-                  Object Tracking
-                         │
-                         ▼
-                    Risk Engine
-                         │
-                         ▼
-                Announcement Manager
-                         │
-                         ▼
-                     TTS Audio
+There is currently no Hybrid mode in the main pipeline.
 
-Narrated Mode can automatically announce important objects and provide information about their position and proximity.
-3. YOLO26m Object Detection
+---
 
-Dhwani Drishti uses a custom-trained YOLO26m object detection model exported to LiteRT/TFLite.
+# System Architecture
 
-Model file:
+```text
+                         CAMERA FRAME
+                              │
+                 ┌────────────┴────────────┐
+                 │                         │
+                 ▼                         ▼
+          MiDaS Small                  YOLOv8n
+        Relative Depth             Object Detection
+                 │                         │
+                 └────────────┬────────────┘
+                              ▼
+                       Depth + Object
+                           Fusion
+                              │
+                              ▼
+                       Spatial Zones
+                              │
+                              ▼
+                       Object Tracker
+                              │
+                              ▼
+                         Risk Engine
+                              │
+                   ┌──────────┴──────────┐
+                   │                     │
+                   ▼                     ▼
+             Announcements          User Query
+                   │                     │
+                   ▼                     ▼
+                 Android             Voice Response
+                   TTS
+```
 
-app/src/main/assets/dhwani_drishti_17class.tflite
+Soundscape Mode uses the camera/depth branch to generate continuous spatial audio, while Narrated Mode uses the full object/depth/tracking/risk pipeline.
 
-The model is designed specifically for the Dhwani Drishti application.
+---
 
-Model configuration
-Property	Value
-Architecture	YOLO26m
-Task	Object Detection
-Input Size	512 × 512
-Input Layout	NCHW
-Input Type	FLOAT32
-Output Shape	[1, 300, 6]
-Output Type	FLOAT32
-Classes	17
-Runtime	LiteRT / TensorFlow Lite
-Android Inference	CPU
+# Operating Modes
 
-Each detection contains:
+## Mode 1 — Soundscape
 
+```text
+Camera
+  ↓
+Depth Estimation
+  ↓
+Spatial Analysis
+  ↓
+Stereo Audio Mapping
+  ↓
+Continuous Soundscape
+```
+
+Soundscape Mode is intended to provide continuous environmental awareness through audio rather than spoken descriptions for every frame.
+
+## Mode 2 — Narrated
+
+```text
+Camera
+  ↓
+YOLOv8n + MiDaS
+  ↓
+Depth/Object Fusion
+  ↓
+Spatial Zones
+  ↓
+Object Tracking
+  ↓
+Risk Engine
+  ↓
+Announcement Manager
+  ↓
+Text-to-Speech
+```
+
+Narrated Mode provides object descriptions, relative proximity information, movement/approach information, warnings, and responses to user voice queries.
+
+---
+
+# Object Detection
+
+Dhwani Drishti's active Narrated-mode detector uses the **YOLOv8n** model stored at:
+
+```text
+app/src/main/assets/yolov8n_fp16.tflite
+```
+
+The detector directly uses an 80-class COCO label mapping in `ObjectDetector.kt`.
+
+### Configuration
+
+| Property | Current implementation |
+|---|---|
+| Architecture | YOLOv8n |
+| Task | Object Detection |
+| Input size | 320 × 320 |
+| Classes | 80 COCO classes |
+| Confidence threshold | 0.40 |
+| Runtime | TensorFlow Lite / LiteRT-compatible Android stack |
+| CPU threads | 4 |
+| Inference | On-device |
+| Output | Bounding box + confidence + class ID |
+
+Each accepted detection is represented internally as:
+
+```text
 [x1, y1, x2, y2, confidence, class_id]
-4. Custom 17 Object Classes
+```
 
-The model currently recognizes:
-0   person
-1   bicycle
-2   car
-3   motorcycle
-4   truck
-5   stop sign
-6   bench
-7   dog
-8   chair
-9   bed
-10  laptop
-11  book
-12  bag
-13  door
-14  window
-15  stair
-16  pothole
-The corresponding labels are stored in:
+The detector normalizes bounding boxes to the 0–1 coordinate range used by downstream spatial processing.
 
-app/src/main/assets/labels.txt
-5. Depth Estimation
+### Important model note
 
-Dhwani Drishti uses a MiDaS-based depth estimation pipeline.
+The repository also contains a legacy/experimental asset:
 
-The depth model produces a normalized closeness map:
+```text
+app/src/main/assets/dhwani_drishti_17class.tflite
+```
 
-0.0 → far
-1.0 → close
+However, the active `ObjectDetector` deliberately loads `yolov8n_fp16.tflite` and uses the 80-class COCO mapping. The 17-class asset is therefore **not the active production detector in the current main branch**.
 
-Depth information is then combined with YOLO bounding boxes.
+The current `labels.txt` file still contains the older 17-label list and should be treated as a legacy asset rather than the source of truth for the active YOLOv8 detector.
 
-For each detected object, the system samples the depth map around the object and estimates its relative distance.
+---
 
-6. Depth + Object Fusion
+# Depth Estimation
 
-Object detection alone tells us:
-"There is a person."
-Depth estimation alone tells us:
+Dhwani Drishti uses a MiDaS Small model for monocular depth estimation:
 
-"Something is close."
+```text
+app/src/main/assets/midas_small.tflite
+```
 
-Dhwani Drishti combines both.
+The model produces a **relative depth / inverse-depth representation**, not guaranteed physical distance in metres.
 
-Example:
+### Configuration
 
-YOLO
- ↓
-Person
- ↓
-Bounding Box
- ↓
-Depth Map
- ↓
-Distance Estimation
- ↓
-Person + Distance
+| Property | Value |
+|---|---|
+| Model | MiDaS Small |
+| Input | 256 × 256 |
+| Output | 256 × 256 depth map |
+| Depth type | Relative inverse depth |
+| GPU | Used when supported |
+| CPU fallback | Available |
+| CPU threads | 4 |
 
-The resulting object representation contains:
+The pipeline converts the model output into a normalized closeness representation for downstream reasoning.
 
+Conceptually:
+
+```text
+Lower relative value  → farther
+Higher relative value → closer
+```
+
+The exact raw model value should not be interpreted directly as metres.
+
+---
+
+# Depth and Object Fusion
+
+Object detection and depth estimation solve different parts of the problem.
+
+**YOLOv8n** provides:
+
+```text
+Object identity
+Bounding box
+Confidence
+```
+
+**MiDaS** provides:
+
+```text
+Relative depth information
+```
+
+The fusion stage samples depth information associated with the detected object's region and attaches a relative distance/proximity estimate to the object.
+
+The resulting tracked representation includes information such as:
+
+```text
 label
 boundingBox
 confidence
 distance
 zone
-7. Spatial Zones
+```
 
-Each detected object is assigned a horizontal zone based on the center of its bounding box.
+This allows the system to move from:
 
-LEFT        CENTER        RIGHT
-  |            |            |
-  ▼            ▼            ▼
+> "There is a person."
 
+Towards:
 
-0.0          0.5           1.0
+> "There is a person close to you, slightly to your right."
 
-This allows the system to produce spoken descriptions such as:
+without claiming an unsupported exact physical distance.
 
+---
+
+# Spatial Zones
+
+The horizontal position of each detected object is converted into a spatial zone:
+
+```text
+LEFT              CENTER              RIGHT
+  │                  │                  │
+  ▼                  ▼                  ▼
+0.0                0.5                 1.0
+```
+
+The zone is derived from the normalized horizontal position of the detected object's centroid.
+
+This supports responses such as:
+
+```text
 "Person is on your left."
-
-
 "Laptop is in front of you."
+"Car is on your right."
+```
 
+The same spatial information is also used by the audio and risk layers.
 
-"Door is on your right."
-Object Tracking
+---
 
-Detected objects are tracked across consecutive frames.
+# Object Tracking
 
-The tracker maintains information such as:
+YOLO performs independent detection on individual frames. The `ObjectTracker` adds temporal continuity across consecutive frames.
 
-Object ID
-Object label
-Current position
-Current distance
-Distance history
-Current spatial zone
-Last seen time
+Each active track can maintain:
 
-Tracking allows the application to determine whether an object is:
+- Stable object ID
+- Object label
+- Relative distance
+- Centroid position
+- Bounding box
+- Detection confidence
+- Spatial zone
+- Distance history
+- Centroid history
+- Last-seen timestamp
 
-stationary
-approaching
-moving away
+The tracker uses lightweight centroid-based matching with the same class label and a maximum normalized matching distance.
 
-rather than treating every camera frame as a completely new scene.
+### Temporal reasoning
 
-9. Risk Engine
+The stored distance history allows the system to estimate whether an object is:
 
-The Risk Engine evaluates detected objects according to:
+```text
+Approaching
+Moving away
+Stable
+```
 
-Distance
-Object importance
-Spatial position
+For example:
 
-Objects closer to the user receive a higher risk score.
+```text
+Far → Medium → Close → Very Close
+```
 
-Objects such as:
+can indicate an approaching object.
 
-person
-car
-motorcycle
-bus
-truck
-bicycle
+The tracker intentionally treats these as **relative changes**, because the underlying MiDaS depth is not guaranteed metric distance.
 
-receive higher importance than ordinary objects.
+---
 
-The resulting risk level is:
+# Risk Engine
 
-LOW
-MEDIUM
-HIGH
-CRITICAL
+The Risk Engine converts scene information into a heuristic risk score.
 
-Example:
+The current design considers factors including:
 
-Person
-+
-Very close
-+
-Center of view
-        ↓
-High / Critical risk
-10. Automatic Voice Announcements
+- Relative proximity
+- Object importance
+- Spatial position
+- Object size / visual occupancy
+- Approaching behaviour
 
-The Announcement Manager determines when an object should be announced.
+The output is used to prioritize which information should be communicated first.
 
-It considers factors such as:
+Conceptually:
 
-Object distance
-Risk
-Approaching behavior
-Spatial zone
-Announcement priority
-Cooldown
+```text
+Object
+  +
+Proximity
+  +
+Spatial Position
+  +
+Movement
+  +
+Importance
+       ↓
+   Risk Score
+       ↓
+LOW / MEDIUM / HIGH / CRITICAL
+```
 
-Examples:
+The risk system is a **heuristic prototype layer**, not a clinically validated or statistically validated safety model.
 
+---
+
+# Automatic Voice Announcements
+
+The Announcement Manager prevents the system from speaking every detected object on every frame.
+
+Announcements are prioritized using conditions such as:
+
+- Very close objects
+- Close objects
+- Approaching objects
+- Priority objects
+- Spatial position
+- Announcement cooldown
+- Current speech state
+
+The system also supports global speech interruption so that a new voice command can take control of the audio output.
+
+Example outputs include:
+
+```text
 "Person very close."
-
-
 "Car approaching from your right."
-
-
 "Laptop nearby."
-
-
 "Obstacle on your left."
+```
 
-The exact announcement depends on the current scene and risk state.
+The exact phrase depends on the current tracked scene.
 
-11. Voice Commands
+---
 
-Dhwani Drishti supports voice interaction through speech recognition.
+# Voice Interaction
 
-The user can activate the assistant using commands such as:
+Dhwani Drishti supports speech-based interaction so that the user does not need to navigate the application visually.
 
-"Hey Dhwani..."
+Example intent:
 
-The application supports commands including:
-
-What's in front?
-"Hey Dhwani, what's in front of me?"
-
-The application describes the currently tracked scene.
-
-Example:
-
-"I see a person and a laptop in front of you."
-Locate an Object
-
-The user can ask:
-
-"Hey Dhwani, where is the door?"
-
-or:
-
-"Hey Dhwani, where is the laptop?"
-
-or:
-
-"Hey Dhwani, find the person."
-
-The system:
-
-Voice Command
-      ↓
-Extract Object Name
-      ↓
-Search Latest Tracked Scene
-      ↓
-Find Requested Object
-      ↓
-Read Spatial Zone
-      ↓
-Generate Response
-      ↓
-Text-to-Speech
-
-Example:
-
+```text
 User:
-"Hey Dhwani, where is the door?"
-
+"Hey Dhwani, what's in front of me?"
 
 System:
-"Door is on your left."
-
-Possible responses include:
-
-"Door is on your left."
-
-
-"Door is in front of you."
-
-
-"Door is on your right."
-
-
-"I don't currently see a door."
-12. OCR / Read Mode
-
-Dhwani Drishti also supports reading text from the camera.
-
-Voice command:
-
-"Hey Dhwani, read."
-
-The application captures the relevant camera content, performs OCR, and converts the recognized text into speech.
-
-Pipeline:
-
-Camera
-   ↓
-Image
-   ↓
-OCR
-   ↓
-Recognized Text
-   ↓
-Text-to-Speech
-13. Text-to-Speech
-
-The application uses Android text-to-speech capabilities to communicate results to the user.
-
-TTS is used for:
-
-Object warnings
-Risk announcements
-Object location
-Scene descriptions
-OCR results
-Voice-command responses
-14. Calibration
-
-The application includes depth calibration.
-
-The calibration process records:
-
-Near reference
-Far reference
-
-These values are used to improve interpretation of the depth model's raw output.
-
-Calibration UI provides:
-
-Near-distance recording
-Far-distance recording
-Calibration status
-Skip option
-Completion controls
-Application Modes
-
-Dhwani Drishti currently has two modes.
-
-Mode 1 — Soundscape
-SOUNDSCAPE
-
-Pipeline:
-
-Camera
-   ↓
-Depth Estimation
-   ↓
-Spatial Zones
-   ↓
-Directional Audio
-
-Purpose:
-
-Provide continuous spatial/environmental awareness through sound.
-
-Mode 2 — Narrated
-NARRATED
-
-Pipeline:
-
-Camera
-   ↓
-Depth Estimation
-   ↓
-YOLO26m
-   ↓
-Depth Fusion
-   ↓
-Object Tracking
-   ↓
-Risk Engine
-   ↓
-Voice Announcements
-
-Purpose:
-
-Provide spoken information about objects, hazards, distance, movement, and requested object locations.
-
-Mode Switching
-
-The application switches between:
-
-SOUNDSCAPE
-      ↕
-NARRATED
-
-There is currently no Hybrid mode.
-
-Project Architecture
-app/
-│
-├── src/
-│   └── main/
-│       │
-│       ├── assets/
-│       │   ├── dhwani_drishti_17class.tflite
-│       │   └── labels.txt
-│       │
-│       ├── java/
-│       │   └── com/
-│       │       └── dhwanidrishti/
-│       │           └── app/
-│       │
-│       │               ├── MainActivity.kt
-│       │               │
-│       │               ├── audio/
-│       │               │   ├── AnnouncementManager.kt
-│       │               │   └── VoiceCommandManager.kt
-│       │               │
-│       │               ├── camera/
-│       │               │   └── CameraController.kt
-│       │               │
-│       │               ├── ml/
-│       │               │   ├── ObjectDetector.kt
-│       │               │   └── RiskEngine.kt
-│       │               │
-│       │               ├── pipeline/
-│       │               │   ├── DhwaniPipeline.kt
-│       │               │   ├── ModeBEngine.kt
-│       │               │   └── AppMode.kt
-│       │               │
-│       │               └── processing/
-│       │                   ├── DetectedObject.kt
-│       │                   ├── ObjectTracker.kt
-│       │                   └── ...
-│       │
-│       └── res/
-│
-└── README.md
-Core Components
-MainActivity
-
-Responsible for:
-
-Application UI
-Camera permission
-Microphone permission
-Mode switching
-Calibration controls
-Voice command initialization
-Pipeline lifecycle
-CameraController
-
-Responsible for:
-
-Camera initialization
-Camera preview
-Frame acquisition
-Sending frames to the processing pipeline
-DhwaniPipeline
-
-Acts as the central processing pipeline.
-
-It coordinates:
-
-Camera
- ↓
-Depth
- ↓
-Soundscape / Narrated Mode
- ↓
-AI Processing
-
-It also exposes high-level functions for:
-
-What's in front?
-Where is an object?
-Read
-Speak
-ObjectDetector
-
-Responsible for:
-
-Loading YOLO26m LiteRT model
-Image preprocessing
-Letterboxing
-Model inference
-Detection decoding
-Confidence filtering
-Bounding-box normalization
-Mapping class IDs to labels
-
-Model:
-
-dhwani_drishti_17class.tflite
-ObjectTracker
-
-Responsible for maintaining object identities between frames.
-
-It enables:
-
-Object persistence
-Distance history
-Approaching detection
-Zone tracking
-RiskEngine
-
-Responsible for estimating the relative danger of an object.
-
-Inputs include:
-
-Object type
-Distance
-Spatial zone
-
-Output:
-
-RiskLevel
-Risk score
-Reason
-AnnouncementManager
-
-Responsible for spoken environmental feedback.
-
-It controls:
-
-TTS
-Announcement priority
-Cooldowns
-Object warnings
-Scene descriptions
-Object-location responses
-VoiceCommandManager
-
-Responsible for:
-
-Speech recognition
-Wake-word handling
-Command parsing
-Object-name extraction
-Triggering application actions
-
-Supported command categories include:
-
-Read
-What's in front of me?
-Where is X?
-Find X
-Locate X
-Technology Stack
-Android
-Kotlin
-Android SDK
-AndroidX
-CameraX
-Computer Vision
-YOLO26m
-LiteRT / TensorFlow Lite
-MiDaS depth estimation
-Custom object detection dataset
-Audio
-Android Text-to-Speech
-Android Speech Recognition
-Spatial audio / soundscape processing
-AI Pipeline
-YOLO26m
-+
-MiDaS
-+
-Object Tracking
-+
-Risk Analysis
-+
-Speech
-+
-TTS
-YOLO26 Model Integration
-
-The exported model is stored inside Android assets:
-
-app/src/main/assets/dhwani_drishti_17class.tflite
-
-The Android application verifies the model at runtime.
-
-Expected model tensors:
-
-INPUT
-
-
-[1, 3, 512, 512]
-
-
-FLOAT32
-
-and:
-
-OUTPUT
-
-
-[1, 300, 6]
-
-
-FLOAT32
-
-Detection format:
-
-[x1, y1, x2, y2, confidence, class_id]
-
-Bounding boxes are converted into normalized coordinates before being passed to the depth-fusion pipeline.
-
-Detection Pipeline
-Camera Frame
-      │
-      ▼
-Letterbox to 512 × 512
-      │
-      ▼
-RGB → FLOAT32
-      │
-      ▼
-NCHW Tensor
-      │
-      ▼
-YOLO26m
-      │
-      ▼
-300 Candidate Detections
-      │
-      ▼
-Confidence Filtering
-      │
-      ▼
-Class ID → Label
-      │
-      ▼
-Bounding Box Mapping
-      │
-      ▼
-RawDetection
-Depth Fusion Pipeline
-RawDetection
-      │
-      ├── Bounding Box
-      │
-      ▼
-Bounding Box Center
-      │
-      ▼
-Depth Map Sampling
-      │
-      ▼
-Object Distance
-      │
-      ▼
-Spatial Zone
-      │
-      ▼
-DetectedObject
-Object Tracking Pipeline
-DetectedObject
-      │
-      ▼
-ObjectTracker
-      │
-      ├── Object ID
-      ├── Position
-      ├── Distance
-      ├── Zone
-      └── Distance History
-      │
-      ▼
-TrackedObject
-Risk Analysis Pipeline
-Tracked / Detected Object
-          │
-          ├── Distance
-          ├── Object Importance
-          └── Spatial Zone
-                  │
-                  ▼
-             RiskEngine
-                  │
-                  ▼
-        ┌──────────────────┐
-        │ LOW              │
-        │ MEDIUM           │
-        │ HIGH             │
-        │ CRITICAL         │
-        └──────────────────┘
-Voice Interaction Pipeline
-User Speech
-     │
-     ▼
-Speech Recognition
-     │
-     ▼
-Command Parsing
-     │
-     ├───────────────┐
-     │               │
-     ▼               ▼
-"What is..."     "Where is..."
-     │               │
-     ▼               ▼
-Scene Query       Object Query
-     │               │
-     └───────┬───────┘
-             ▼
-        Mode B Engine
-             │
-             ▼
-             TTS
-Example User Interactions
-Scene description
-User:
-"Hey Dhwani, what's in front of me?"
-
-
-Dhwani:
 "I see a person and a laptop in front of you."
-Object location
-User:
-"Hey Dhwani, where is the laptop?"
+```
 
+### Object location queries
 
-Dhwani:
-"Laptop is on your right."
-Door location
-User:
-"Hey Dhwani, where is the door?"
+The user can ask questions such as:
 
+```text
+"Where is the door?"
+"Where is the laptop?"
+"Find the person."
+```
 
-Dhwani:
+The system searches the latest tracked scene and can respond using the object's spatial zone.
+
+Example:
+
+```text
 "Door is on your left."
-Missing object
-User:
-"Hey Dhwani, where is the car?"
+```
 
+If the requested object is not currently detected, the system can report that it does not currently see the object.
 
-Dhwani:
-"I don't currently see a car."
-Reading
-User:
-"Hey Dhwani, read."
+---
 
+# OCR / Read Mode
 
-Dhwani:
-[Reads detected text]
-Current Model Testing
+Dhwani Drishti includes text recognition using **Google ML Kit Text Recognition**.
 
-The YOLO26m model has been successfully loaded and tested on Android.
+Pipeline:
 
-Verified runtime configuration:
+```text
+Camera Frame
+     ↓
+ML Kit Text Recognition
+     ↓
+Recognized Text
+     ↓
+Text-to-Speech
+```
 
-Model:
-dhwani_drishti_17class.tflite
+This enables the application to read visible text aloud instead of requiring the user to read it visually.
 
+---
 
-Input:
-[1, 3, 512, 512]
+# Soundscape Mode
 
+Soundscape Mode provides continuous stereo audio feedback rather than relying entirely on spoken messages.
 
-Output:
-[1, 300, 6]
+The implementation uses Android `AudioTrack` and stereo PCM streaming.
 
+Conceptually:
 
-Type:
-FLOAT32
+```text
+Visual Scene
+    ↓
+Depth / Spatial Analysis
+    ↓
+Audio Parameters
+    ↓
+Stereo Sound
+```
 
-The Android runtime has successfully produced detections for classes including:
+The current sonification layer maps scene information into audio characteristics such as pitch, channel emphasis, and loudness.
 
-person
-bed
-laptop
-bag
-book
+### Current audio configuration
 
-Example runtime detections:
+- Sample rate: 44.1 kHz
+- Stereo output
+- PCM streaming through Android AudioTrack
+- Approximate frequency range: 220–880 Hz
+- Left/right channel emphasis for spatial information
+- Continuous audio generation rather than individual alert sounds
 
-person confidence=0.72
-bed confidence=0.61
-laptop confidence=0.52
-person confidence=0.93
-bag confidence=0.58
-book confidence=0.36
-Dataset
+The purpose is to give the user an additional non-verbal representation of the surrounding spatial structure.
 
-The object detection model was trained using a custom reduced dataset containing the 17 target classes.
+---
 
-The application focuses on objects that are useful for environmental awareness and navigation assistance.
+# Depth Calibration
 
-The model classes include:
+Because monocular depth models produce relative rather than guaranteed metric distance, Dhwani Drishti includes a calibration layer.
 
-People
-Vehicles
-Indoor objects
-Navigation-related objects
-Road hazards
-Performance Considerations
+The calibration workflow records:
 
-YOLO inference is currently performed using the CPU.
+- Near reference
+- Far reference
 
-The current implementation uses multiple CPU threads.
+These values can then be used to normalize the depth output for the current device/session.
 
-The application intentionally does not run YOLO on every camera frame.
+The calibration UI supports recording reference values, checking calibration state, skipping calibration, and completing the calibration process.
 
-Instead, detection is throttled to reduce unnecessary computation:
+Calibration improves the usefulness of relative depth but does **not** turn MiDaS into a guaranteed centimetre-accurate ranging sensor.
 
-Camera
-~20 FPS
+---
 
+# Camera Pipeline
 
-YOLO
-~6–7 FPS
+CameraX provides the live camera stream and image analysis pipeline.
 
-Depth processing can operate independently at a higher frequency.
+The camera analysis path is designed around processing the newest available frame rather than building a large backlog of stale frames.
 
-This architecture is intended to balance:
+Conceptually:
 
-Accuracy
-Latency
-Battery usage
-Thermal performance
-Current Development Status
-Completed
- Android application foundation
- Camera pipeline
- Soundscape mode
- Depth estimation pipeline
- Depth calibration
- YOLO26m integration
- Custom 17-class object detection model
- LiteRT/TFLite inference
- Bounding-box processing
- Depth-object fusion
- Object tracking
- Distance history
- Approaching-object detection
- Risk engine
- Automatic voice announcements
- Speech recognition
- "What's in front of me?" command
- "Where is X?" command
- Object LEFT/CENTER/RIGHT location logic
- OCR / Read command
- Text-to-speech
- Two-mode architecture
-Work in Progress
+```text
+CameraX
+  ↓
+Latest available frame
+  ↓
+Image preprocessing
+  ↓
+AI inference
+  ↓
+Scene processing
+```
 
-The project is still under active development.
+This is important for an interactive assistive application because a delayed result from an old frame can be less useful than a slightly less frequent result from the current scene.
 
-Current areas being improved include:
+---
 
- Object tracking stability
- Multi-object tracking accuracy
- Detection consistency across consecutive frames
- False-positive reduction
- Depth-distance calibration
- Announcement prioritization
- Announcement cooldown tuning
- Voice-command robustness
- Performance optimization
- Battery and thermal optimization
- On-device inference optimization
- Broader real-world testing
- Improved navigation-specific object detection
-Safety Notice
+# Technology Stack
 
-Dhwani Drishti is an experimental assistive technology project.
+## Android
 
-Object detection, depth estimation, and distance estimation can fail because of:
+- Kotlin
+- Android SDK
+- CameraX
+- Android Text-to-Speech
+- Kotlin Coroutines
 
-Poor lighting
-Motion blur
-Occlusion
-Camera limitations
-Incorrect model predictions
-Depth-estimation errors
-Unusual environments
-Objects outside the trained classes
+## Computer Vision / AI
 
-The system should therefore not be treated as a guaranteed safety or navigation system.
+- YOLOv8n
+- MiDaS Small
+- Google ML Kit Text Recognition
 
-Real-world testing should be performed carefully and with appropriate supervision.
+## On-device inference
 
-Future Development
+- TensorFlow Lite / LiteRT Android runtime
+- GPU delegate support for the depth pipeline where available
+- CPU fallback
 
-Planned improvements include:
+## Audio
 
-AI
-Improved custom object detection
-Better navigation-specific training
-More robust depth estimation
-Improved object tracking
-Temporal scene understanding
-Object movement prediction
-Voice
-More natural conversational commands
-Better object-name understanding
-Context-aware questions
-Multilingual voice interaction
-Navigation
-Path-aware obstacle reasoning
-Crosswalk detection
-Traffic-related awareness
-Stair and doorway awareness
-Pothole and road hazard detection
-On-device AI
-Faster inference
-Hardware acceleration
-Quantized models
-Lower memory consumption
-Battery optimization
-Project Structure
+- Android AudioTrack
+- Stereo PCM audio
+- Audio-based spatial representation
 
-The major processing flow is:
+## Scene Processing
 
-                    ┌─────────────────┐
-                    │     Camera      │
-                    └────────┬────────┘
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │  DhwaniPipeline │
-                    └────────┬────────┘
-                             │
-                 ┌───────────┴───────────┐
-                 │                       │
-                 ▼                       ▼
-        ┌─────────────────┐     ┌─────────────────┐
-        │   SOUNDSCAPE    │     │    NARRATED     │
-        └────────┬────────┘     └────────┬────────┘
-                 │                       │
-                 ▼                       ▼
-          Depth / Zones             YOLO26m
-                 │                       │
-                 ▼                       ▼
-          Spatial Audio             Depth Fusion
-                                         │
-                                         ▼
-                                  Object Tracking
-                                         │
-                                         ▼
-                                    Risk Engine
-                                         │
-                                         ▼
-                                Announcement Manager
-                                         │
-                                         ▼
-                                         TTS
-Installation
-Requirements
-Android Studio
-Android device with camera
-Android microphone access
-Android device capable of running the LiteRT/TFLite model
-Sufficient storage for the model and application
-Build
+- Bounding-box normalization
+- Depth/object fusion
+- Spatial zoning
+- Multi-frame object tracking
+- Relative proximity categorization
+- Heuristic risk scoring
+- Announcement prioritization
 
-Clone the repository:
+---
 
-git clone https://github.com/Abhishek-00756/dhwani_drishti.git
+# Project Structure
 
-Enter the project:
+```text
+app/
+└── src/
+    └── main/
+        ├── assets/
+        │   ├── yolov8n_fp16.tflite
+        │   ├── midas_small.tflite
+        │   ├── dhwani_drishti_17class.tflite   # legacy/experimental
+        │   ├── labels.txt                      # legacy 17-label list
+        │   └── README.md
+        │
+        ├── java/
+        │   └── com/
+        │       └── dhwanidrishti/
+        │           └── app/
+        │               ├── MainActivity.kt
+        │               │
+        │               ├── audio/
+        │               │   ├── AnnouncementManager.kt
+        │               │   ├── SonificationEngine.kt
+        │               │   ├── TextReader.kt
+        │               │   └── VoiceCommandManager.kt
+        │               │
+        │               ├── camera/
+        │               │   └── CameraController.kt
+        │               │
+        │               ├── ml/
+        │               │   ├── DepthEstimator.kt
+        │               │   ├── ObjectDetector.kt
+        │               │   └── RiskEngine.kt
+        │               │
+        │               ├── pipeline/
+        │               │   ├── AppMode.kt
+        │               │   ├── DhwaniPipeline.kt
+        │               │   └── ModeBEngine.kt
+        │               │
+        │               └── processing/
+        │                   ├── DetectedObject.kt
+        │                   ├── ObjectTracker.kt
+        │                   ├── Zone.kt
+        │                   └── ZoneProcessor.kt
+        │
+        └── res/
+```
 
-cd dhwani_drishti
+The exact source tree can evolve as development continues; the important architectural separation is between camera input, ML inference, scene processing, audio/voice output, and the top-level pipeline.
 
-Open the project in Android Studio.
+---
 
-Allow Gradle to synchronize dependencies.
+# Model Assets
 
-Build the application:
+| Asset | Role | Active? |
+|---|---|---|
+| `yolov8n_fp16.tflite` | YOLOv8n object detection | **Yes** |
+| `midas_small.tflite` | MiDaS relative depth estimation | **Yes** |
+| `dhwani_drishti_17class.tflite` | Older custom/experimental detector | No |
+| `labels.txt` | Older 17-label list | Legacy |
 
+The active YOLOv8 detector contains its current 80-class COCO label mapping directly in `ObjectDetector.kt`.
+
+---
+
+# Installation and Development
+
+## Requirements
+
+- Android Studio
+- Android SDK
+- Android device with camera support
+- USB debugging enabled for development deployment
+
+## Build
+
+From the project root:
+
+```bash
 ./gradlew assembleDebug
-Running the Application
-Connect an Android device.
-Enable USB debugging.
-Open the project in Android Studio.
-Build the application.
-Install it on the device.
-Grant camera permission.
-Grant microphone permission.
-Complete or skip depth calibration.
-Select:
-SOUNDSCAPE
+```
 
-or:
+The generated debug APK is normally located at:
 
-NARRATED
-Testing Voice Commands
+```text
+app/build/outputs/apk/debug/app-debug.apk
+```
 
-After enabling microphone access, test:
+## Install with ADB
 
-Hey Dhwani, what's in front of me?
-Hey Dhwani, where is the person?
-Hey Dhwani, where is the laptop?
-Hey Dhwani, where is the door?
-Hey Dhwani, find the book.
-Hey Dhwani, read.
-Debugging
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
 
-Useful Logcat tags include:
+Or, if using the Android SDK platform-tools path directly:
 
-ObjectDetector
-DHWANI_VOICE
-DHWANI_PIPELINE
-ModeB
-ObjectTracker
+```bash
+~/Library/Android/sdk/platform-tools/adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
 
-For YOLO26 verification, check:
+The application requires camera/audio-related Android permissions needed by the implemented features.
 
-Actual input shape: [1, 3, 512, 512]
-Actual output shape: [1, 300, 6]
+---
 
-Successful detection logs look like:
+# Current Status
 
-YOLO26 DETECTIONS: 1
-person confidence=0.72
-Repository
+Dhwani Drishti is an **active prototype/research project**.
 
-GitHub:
+### Implemented
 
-https://github.com/Abhishek-00756/dhwani_drishti
+- [x] CameraX real-time camera pipeline
+- [x] YOLOv8n on-device object detection
+- [x] MiDaS Small relative depth estimation
+- [x] Depth/object fusion
+- [x] Spatial zones
+- [x] Object tracking
+- [x] Relative proximity categories
+- [x] Approaching/moving-away estimation
+- [x] Risk scoring
+- [x] Automatic announcements
+- [x] Narrated Mode
+- [x] Soundscape Mode
+- [x] Voice interaction
+- [x] OCR / Read Mode
+- [x] Android Text-to-Speech
+- [x] Depth calibration
 
-License
+### Not yet production-grade
 
-This project is currently under development.
+- Metric-distance accuracy has not been established.
+- Risk scoring has not been clinically validated.
+- The current detector is a general-purpose COCO model rather than a mobility-specific hazard model.
+- Large-scale field evaluation has not yet been completed.
 
-Add an appropriate open-source license before distributing the project publicly.
+---
 
-Disclaimer
+# Limitations
 
-Dhwani Drishti is a research and development project intended to explore the use of artificial intelligence and computer vision for accessibility.
+Dhwani Drishti is an assistive prototype and should **not** be treated as a replacement for a white cane, guide dog, mobility training, or human assistance.
 
-It should not be considered a replacement for a trained guide, mobility aid, professional navigation system, or other safety-critical equipment.
+Current technical limitations include:
 
-The developers are not responsible for incidents resulting from reliance on model predictions or application output.
+1. **Relative depth** — MiDaS does not guarantee exact physical distance in metres.
+2. **General-purpose object detection** — YOLOv8n is trained for general COCO categories and is not specifically optimized for every mobility hazard.
+3. **Lighting and visibility** — Detection quality can degrade under poor lighting, blur, occlusion, unusual viewpoints, or visually ambiguous scenes.
+4. **Heuristic risk model** — Current risk thresholds and object priorities are engineering heuristics, not clinically validated safety thresholds.
+5. **Speech recognition** — Voice-command behaviour can depend on the Android device and its configured speech-recognition service.
+6. **Mobile compute constraints** — Real-time AI processing must balance latency, thermal load, battery consumption, and accuracy.
+
+---
+
+# Future Roadmap
+
+The most important next step is to move from a general-purpose object detector toward a **mobility-specific perception model**.
+
+Potential future classes include:
+
+```text
+pothole
+stair
+curb
+open drain
+construction barrier
+road obstruction
+crosswalk
+entrance / doorway
+pole
+```
+
+Other future work includes:
+
+- Custom mobility-focused dataset collection
+- Training and evaluating a dedicated hazard detector
+- Better metric-depth estimation
+- More robust obstacle classification
+- Improved risk calibration using real-world evaluation data
+- Quantitative latency/FPS benchmarking across Android devices
+- Precision/recall and confusion-matrix evaluation
+- Battery and thermal profiling
+- More robust navigation assistance
+- Larger field testing with representative environments
+
+---
+
+# Design Philosophy
+
+Dhwani Drishti is built around an **audio-first interaction model**.
+
+Instead of requiring the user to continuously inspect a visual interface, the system attempts to transform visual information into concise audio information:
+
+```text
+SEE
+ ↓
+UNDERSTAND
+ ↓
+PRIORITIZE
+ ↓
+SPEAK / SONIFY
+```
+
+The central engineering idea is the combination of:
+
+```text
+Object Detection
+       +
+Relative Depth
+       +
+Spatial Reasoning
+       +
+Temporal Tracking
+       +
+Risk Prioritization
+       +
+Audio Feedback
+```
+
+This layered architecture allows individual components to be improved independently as better models and better mobility-specific datasets become available.
+
+---
+
+## License
+
+Add the project's chosen license here before public distribution.
+
+---
+
+## Acknowledgements
+
+Dhwani Drishti builds on open-source and platform technologies including YOLO, MiDaS, TensorFlow Lite/LiteRT, Android CameraX, Android Text-to-Speech, and Google ML Kit.
